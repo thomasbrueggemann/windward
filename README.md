@@ -14,14 +14,36 @@ npm run dev        # http://localhost:5173
 |---|---|
 | **W A S D / arrows** | walk (camera-relative) |
 | **Mouse** | look (click to capture the mouse; drag also works) · **wheel** zoom |
-| **Space** | jump; hold to fly on the scarf's glowing charge |
+| **Space** | jump; hold to fly (flutter upward) on the scarf's glowing charge; with an empty scarf, holding it glides |
+| **C** (or **G**) | toggle **glide** while airborne: robe spread, slow sink, fast forward flight, banked turns; costs no charge |
+| **Shift** (hold) | **dive**: tuck and plunge, trading height for speed; let go (or skim the ground) to pull out into a swoop |
 | **E / Q / right-click** | sing; hold and release for a long call that carries much further |
 | **Esc / P** | pause menu: look sensitivity, invert Y, volume (saved per browser) |
-| Gamepad | left stick walk, right stick look, A fly, X/B sing, Start pause |
-| Touch | left half joystick, right half look, on-screen FLY / SING |
+| Gamepad | left stick walk, right stick look, A / RT fly, LB / Y glide, RB dive, X / B / LT sing, Start pause |
+| Touch | left half joystick, right half look, on-screen FLY / GLIDE / DIVE / SING |
 
 Walk toward the glowing split in the mountain. Steep dunes turn walking into **sand-surfing**; you can still
 trudge up them slowly. Follow the pillars of light to the symbols that lengthen your scarf.
+
+### Flight modes
+
+All flight is fed by the scarf: symbols lengthen it and so its charge.
+
+- **Flutter** (hold Space): rise in soft beats while the charge lasts; the sleeves beat with each flap.
+- **Glide** (C): sleeves and robe spread like a paraglider. Sink ~1.7 m/s, cruise 14 m/s, turns bank in at up to
+  1.6 rad/s; push the stick against your flight to flare and slow down. Free. Glide also kicks in when the
+  charge runs out while Space is held, after a swoop, and when you leave the top of a wind column.
+- **Dive** (hold Shift, at least 2.5 m up): tucked, plunging up to 40 m/s with the horizon tilting toward you.
+  Releasing converts the fall into forward speed (45 % high up, up to 85 % within a few metres of the ground,
+  capped at 34 m/s) and a short rising arc; skim too low and it pulls out for you.
+- **Soar**: swirling columns of sand, motes and red cloth (`src/world/updrafts.js`) lift you up to ~11 m/s
+  and refill the scarf; walking into one lifts you off. Positions come from a function so any world can feed them.
+- **Ribbon boost**: flying past a cloth creature or your companion gives a short charged burst forward with a
+  trail of light (each source once every 6 s).
+
+The camera pulls back and widens in a glide; a dive tucks it in with an FOV kick and slight shake (both off
+with *Reduce motion*). Each mode has its own sound: soft flaps, a broad gliding wind, a whoosh that rises in pitch
+with dive speed, a whistling column.
 
 ## What's in it
 

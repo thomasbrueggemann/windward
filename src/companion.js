@@ -41,7 +41,7 @@ export class Companion {
     this.state = 'hidden';
     this.spot = null;
     this.met = false;
-    this.inp = { mx: 0, my: 0, jump: false, jumpPressed: false, sing: false };
+    this.inp = { mx: 0, my: 0, jump: false, jumpPressed: false, sing: false, dive: false, glide: false, glidePressed: false };
     this.side = index % 2 ? -1 : 1;
     this.stuckT = 0; this.flyHold = 0; this.singHold = 0;
     this.replyT = -1; this.replyBig = false; this.replyDepth = 0;
@@ -116,6 +116,9 @@ export class Companion {
     inp.mx = inp.my = 0; inp.jumpPressed = false; inp.jump = false; inp.sing = false;
     const st = this.state;
     const sitting = st === 'waiting' || st === 'resting';
+    inp.dive = false; inp.glidePressed = false;
+    // mirror the player's flight: spread the robe while they glide or soar
+    inp.glide = !c.grounded && (player.mode === 'glide' || player.mode === 'soar');
 
     // ----- hearing the player sing
     const hearR = sitting ? 60 : 45;

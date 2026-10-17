@@ -12,13 +12,14 @@ function robeSwayMaterial(params) {
   const u = {
     uSway: { value: new THREE.Vector3() }, uTime: { value: 0 }, uFlutter: { value: 0 },
     uStride: { value: 0 }, uStrideAmt: { value: 0 }, uFlare: { value: 0 },
+    uSpread: { value: 0 }, uTuck: { value: 0 },
   };
   mat.userData.sway = u;
   mat.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, u);
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>
-uniform vec3 uSway; uniform float uTime, uFlutter, uStride, uStrideAmt, uFlare;`)
+uniform vec3 uSway; uniform float uTime, uFlutter, uStride, uStrideAmt, uFlare, uSpread, uTuck;`)
       .replace('#include <begin_vertex>', `#include <begin_vertex>
 {
   float h = clamp((${SHOULDER_Y.toFixed(2)} - position.y) / ${(SHOULDER_Y - HEM_Y).toFixed(2)}, 0., 1.);
@@ -35,6 +36,14 @@ uniform vec3 uSway; uniform float uTime, uFlutter, uStride, uStrideAmt, uFlare;`
   // billow open in flight
   transformed.xz += dir * w * uFlare * 0.16;
   transformed.y += w * uFlare * 0.07;
+  // glide: the robe opens sideways like a wing and its hem trails back and lifts
+  transformed.x *= 1. + uSpread * 0.6 * h;
+  transformed.z = transformed.z * (1. - uSpread * 0.25 * h) - uSpread * w * 0.2;
+  transformed.y += uSpread * w * 0.1;
+  // dive: wrapped tight around the body, streaming out behind
+  transformed.xz *= 1. - uTuck * 0.38 * h;
+  transformed.z -= uTuck * w * 0.4;
+  transformed.y += uTuck * w * 0.16;
   // travelling ripples around the hem
   float rip = sin(a * 6. + uTime * 6.5 + position.y * 9.) * 0.6 + sin(a * 11. - uTime * 9.) * 0.4;
   transformed.xz += dir * w * uFlutter * 0.028 * rip;
@@ -50,6 +59,28 @@ function bentCone(r, h, bend, seg = 18) {
   const g = new THREE.LatheGeometry(pts, seg);
   const p = g.attributes.position;
   for (let i = 0; i < p.count; i++) { const t = p.getY(i) / h; p.setZ(i, p.getZ(i) - bend * t * t); }
+  g.computeVertexNormals();
+  return g;
+}
+
+/** One sleeve panel in body space (pivot at the shoulder): a soft, slightly cupped cloth wing. */
+function wingGeometry(sx, nu = 7, nv = 6) {
+  const pos = [], uv = [], ind = [];
+  for (let j = 0; j <= nv; j++) {
+    for (let i = 0; i <= nu; i++) {
+      const u = i / nu, v = j / nv;
+      const tx = 0.62 * u, ty = -0.1 * u * u, tz = -0.03 * u;                       // top edge: shoulder to wrist
+      const bx = 0.05 + 0.3 * u, by = -0.66 + 0.36 * u, bz = -0.04 - 0.06 * u;      // bottom edge: hip to wrist
+      const x = tx + (bx - tx) * v, y = ty + (by - ty) * v;
+      const z = tz + (bz - tz) * v - 0.07 * Math.sin(Math.PI * v) * u;             // cupped back like a sail
+      pos.push(sx * x, y, z); uv.push(u * 0.5, 0.3 + v * 0.5);
+      if (i < nu && j < nv) { const a = j * (nu + 1) + i, b = a + nu + 1; ind.push(a, b, a + 1, a + 1, b, b + 1); }
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(ind);
   g.computeVertexNormals();
   return g;
 }
@@ -106,6 +137,19 @@ export function buildTraveler({ white = false } = {}) {
   wrap.rotation.x = Math.PI / 2 + 0.12; wrap.position.set(0, 1.17, -0.01); wrap.scale.set(1, 1.05, 0.8);
   body.add(wrap);
 
+  // sleeve "wings": cloth panels from shoulder to wrist to hem, folded away (scale 0) until the traveler glides
+  const wingMat = new THREE.MeshStandardMaterial({ map: robeTex, roughness: 0.85, metalness: 0, side: THREE.DoubleSide, emissive: 0xffffff, emissiveMap: robeTex, emissiveIntensity: emissive });
+  const wings = [1, -1].map((sx) => {
+    const pivot = new THREE.Group();
+    pivot.position.set(sx * 0.16, 1.07, -0.03);
+    const mesh = new THREE.Mesh(wingGeometry(sx), wingMat);
+    pivot.add(mesh);
+    pivot.scale.set(0.001, 0.4, 1);
+    pivot.visible = false;
+    body.add(pivot);
+    return { pivot, mesh, side: sx };
+  });
+
   // thin dark legs: thigh + shin per side, solved by IK every frame
   const legMat = new THREE.MeshStandardMaterial({ color: white ? 0xd8cfc0 : 0x1c0e09, roughness: 0.7 });
   const thighGeo = new THREE.CylinderGeometry(0.036, 0.03, 1, 8); thighGeo.translate(0, 0.5, 0);
@@ -117,7 +161,7 @@ export function buildTraveler({ white = false } = {}) {
     return { side: i === 0 ? 1 : -1, thigh, shin, foot };
   });
 
-  const rig = { root, body, robe, head, tipPivot, legs, sway: robeMat.userData.sway, eyes };
+  const rig = { root, body, robe, head, tipPivot, legs, sway: robeMat.userData.sway, eyes, wings };
   root.userData.rig = rig;
   // rest pose so static clones (the ending's white travelers) stand on their feet
   poseLegs(rig, [new THREE.Vector3(HIP_X, 0, 0.02), new THREE.Vector3(-HIP_X, 0, -0.02)]);
@@ -359,7 +403,20 @@ const SURF_MAX = 25;
 const GRAVITY = 15;
 const COYOTE = 0.14, JUMP_BUFFER = 0.14;
 const STRIDE = 1.45;                 // metres per footfall
-const NO_INPUT = { mx: 0, my: 0, jump: false, jumpPressed: false, sing: false };
+const NO_INPUT = { mx: 0, my: 0, jump: false, jumpPressed: false, sing: false, dive: false, glide: false, glidePressed: false };
+
+// ------------------------------------------------------------------ flight modes (all fed by the scarf)
+// flutter: hold jump with charge — rise on the scarf (drains it)
+// glide:   robe spread, slow sink, fast forward flight with banked turns; free (no charge)
+// dive:    tucked plunge that trades height for speed; pulling out converts the fall into a forward swoop
+// soar:    inside an updraft column the wind carries you up and refills the scarf
+const FLUTTER_RISE = 6.6;
+const GLIDE_SPEED = 14, GLIDE_SINK = 1.7, GLIDE_TURN = 1.6;       // m/s, m/s, rad/s
+const DIVE_G = 22, DIVE_VMAX = 32, DIVE_HSPEED = 16;              // m/s², m/s, m/s
+const SWOOP_MAX = 36;                                             // horizontal cap right after a pull-out
+const AIR_MAX = 36;
+const SOAR_RISE = 11;
+const RIBBON_R = 4.5, RIBBON_BOOST = 8, RIBBON_CD = 6, RIBBON_MIN_SPEED = 5;
 
 const exp = (k, dt) => 1 - Math.exp(-k * dt);
 const wrapAngle = (a) => Math.atan2(Math.sin(a), Math.cos(a));
@@ -418,6 +475,22 @@ export class Player {
     this.colliders = [];
     this.shelters = [];
     this.events = [];
+    // flight modes
+    this.mode = 'ground';    // ground | fall | flutter | glide | dive | soar
+    this.glideLatch = false; // glide toggled on (until landing / toggled off)
+    this.diveBlock = false;  // after an automatic pull-out, dive needs a fresh press
+    this.glideK = 0; this.diveK = 0; this.soarK = 0; this.flutK = 0; this.swoopK = 0;
+    this.updraftK = 0;       // 0..1 strength of the updraft we are in
+    this.swoopT = 0;         // > 0 right after a dive pull-out
+    this.boostT = 0;         // > 0 during a ribbon boost (trail)
+    this.boostCd = 0;
+    this.diveT = 0; this.diveTop = 0;
+    this.ribbonSources = []; // array (or function returning one) of Vector3-likes (cloth creatures, companions) that give a ribbon boost when flown close to
+    this._ribbonCd = new WeakMap();
+    this._clock = 0;
+    this._flapT = 0;
+    this.stats = { lastSwoop: null, peakDive: 0 };
+    this._upd = { k: 0, sx: 0, sz: 0, cx: 0, cz: 0 };
 
     // soft blob shadow
     const sh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: makeBlobShadow(), transparent: true, depthWrite: false, opacity: 0.8, polygonOffset: true, polygonOffsetFactor: -4 }));
@@ -430,6 +503,7 @@ export class Player {
     this.pos.set(x, terrainHeight(x, z), z);
     this.vel.set(0, 0, 0);
     this.grounded = true; this.airT = 0;
+    this.mode = 'ground'; this.flying = false; this.glideLatch = false; this.swoopT = 0; this.boostT = 0;
     this.group.position.copy(this.pos);
     this._lastGy = this.pos.y;
     this._updateAnchor();
@@ -454,7 +528,7 @@ export class Player {
     const sy = Math.sin(this.heading), cy = Math.cos(this.heading);
     // the neck, just behind the shoulders, following the body's lean and bob
     const up = 1.13 * (1 - 0.8 * this.collapse);
-    const fwd = Math.sin(this.lean) * up - 0.1;
+    const fwd = Math.sin(this.lean) * up - 0.1 + this.body.position.z;
     a.set(this.pos.x + sy * fwd, this.pos.y + this.body.position.y + Math.cos(this.lean) * up, this.pos.z + cy * fwd);
   }
 
@@ -495,19 +569,74 @@ export class Player {
         this.squashV -= 2.5;
         this.events.push({ type: 'jump' });
       }
-      this.flying = false;
+      this._clock += dt;
+      const canAct = !this.frozen && this.stunned <= 0;
+      const prevMode = this.mode;
+      if (inp.glidePressed && canAct && !this.grounded) this.glideLatch = !this.glideLatch;
+      if (!inp.dive) this.diveBlock = false;
+
+      // updrafts: shared by everyone who passes env (player and companions)
+      const upd = env && env.updrafts ? env.updrafts.sample(p, this._upd) : null;
+      this.updraftK = upd ? upd.k : 0;
+      // walking into a column: the wind takes you
+      if (this.grounded && this.updraftK > 0.45 && canAct && !this.scripted) {
+        this.grounded = false; v.y = Math.max(v.y, 4.5); this.airT = COYOTE; this.glideLatch = true;
+        this.events.push({ type: 'liftoff' });
+      }
+
+      const gyNow = terrainHeight(p.x, p.z);
+      const hAbove = p.y - gyNow;
+      let mode = 'ground';
       if (!this.grounded) {
-        if (inp.jump && !this.frozen && this.stunned <= 0) {
-          if (this.charge > 0.001) {
-            this.flying = true;
-            v.y += (6.6 - v.y) * exp(3.4, dt);
-            const drain = 1 / (1.5 + 0.11 * this.scarf.n) * (1 + 0.35 * this.cold);
-            this.charge = Math.max(0, this.charge - drain * dt);
-          } else {
-            v.y = Math.max(v.y - GRAVITY * dt, -3.2);       // glide on an empty scarf
-          }
-        } else v.y -= GRAVITY * (v.y > 0 ? 1 : 1.15) * dt;
-        v.y = Math.max(v.y, -26);
+        if (inp.dive && canAct && !this.diveBlock && (prevMode === 'dive' || hAbove > 2.5)) mode = 'dive';
+        else if (this.updraftK > 0.04 && canAct) mode = 'soar';
+        else if (inp.jump && canAct && this.charge > 0.001) mode = 'flutter';
+        else if (canAct && (this.glideLatch || inp.glide || (inp.jump && this.charge <= 0.001) || this.swoopT > 0)) mode = 'glide';
+        else mode = 'fall';
+      }
+      // pulling out of a dive: the fall becomes forward speed, strongest close to the ground
+      if (prevMode === 'dive' && mode !== 'dive' && !this.grounded) this._swoop(hAbove);
+      if (mode === 'dive' && hAbove < 1.2 + Math.max(0, -v.y) * 0.16 && v.y < -4) {
+        this._swoop(hAbove); this.diveBlock = true; mode = 'glide';
+      }
+      if (mode === 'dive' && prevMode !== 'dive') { this.diveT = 0; this.diveTop = p.y; this.events.push({ type: 'dive' }); }
+      if (mode === 'glide' && prevMode !== 'glide' && prevMode !== 'soar') this.events.push({ type: 'glide' });
+      if (mode === 'soar' && prevMode !== 'soar') this.events.push({ type: 'soar' });
+      if (mode === 'soar') this.glideLatch = true;         // sail off the top of a column in a glide
+      this.mode = mode;
+      this.flying = mode === 'flutter';
+      this.swoopT = Math.max(0, this.swoopT - dt);
+      this.boostT = Math.max(0, this.boostT - dt);
+      this.boostCd = Math.max(0, this.boostCd - dt);
+
+      // vertical
+      if (!this.grounded) {
+        if (mode === 'flutter') {
+          // rise in soft beats rather than a steady elevator
+          const beat = 0.75 + 0.5 * Math.max(0, Math.sin(this._clock * 8.5));
+          v.y += (FLUTTER_RISE - v.y) * exp(3.4 * beat, dt);
+          const drain = 1 / (1.5 + 0.11 * this.scarf.n) * (1 + 0.35 * this.cold);
+          this.charge = Math.max(0, this.charge - drain * dt);
+          this._flapT -= dt;
+          if (this._flapT <= 0) { this._flapT = 0.37; this.events.push({ type: 'flap', soft: false }); }
+        } else if (mode === 'glide') {
+          // sink slowly; momentum from a swoop or a jump carries you up a little first
+          const sink = GLIDE_SINK + 1.2 * this.cold;
+          if (v.y > -sink) v.y = Math.max(-sink, v.y - (this.swoopT > 0 ? 6 : 10) * dt);
+          else v.y += (-sink - v.y) * exp(2.2, dt);
+          this._flapT -= dt;
+          if (this._flapT <= 0) { this._flapT = 1.1 + Math.random() * 0.5; this.events.push({ type: 'flap', soft: true }); }
+        } else if (mode === 'dive') {
+          v.y = Math.max(v.y - DIVE_G * dt, -DIVE_VMAX);
+          this.diveT += dt;
+        } else if (mode === 'soar') {
+          const k = this.updraftK;
+          v.y += (SOAR_RISE * k - 1.0 * (1 - k) - v.y) * exp(0.8 + 2.4 * k, dt);
+          this.charge = Math.min(1, this.charge + 0.4 * k * dt);
+        } else {
+          v.y -= GRAVITY * (v.y > 0 ? 1 : 1.15) * dt;
+        }
+        v.y = Math.max(v.y, mode === 'dive' ? -DIVE_VMAX : -26);
       }
 
       // horizontal
@@ -536,6 +665,30 @@ export class Player {
         }
         const kk = exp(k, dt);
         v.x += (tx - v.x) * kk; v.z += (tz - v.z) * kk;
+      } else if (mode === 'glide' || mode === 'soar' || mode === 'dive') {
+        // banked flight: momentum is turned toward the stick at a limited rate, like a paraglider
+        let hs = Math.hypot(v.x, v.z);
+        let cur = hs > 0.8 ? Math.atan2(v.x, v.z) : this.heading;
+        const turnMax = mode === 'soar' ? 2.4 : mode === 'dive' ? 1.1 : GLIDE_TURN;
+        let brake = 0;
+        if (wishAmt > 0.05) {
+          const want = Math.atan2(wx, wz);
+          const dA = wrapAngle(want - cur);
+          brake = Math.abs(dA) > 2.3 ? wishAmt : 0;          // stick against the flight: flare and slow down
+          cur += clamp(dA, -turnMax * dt, turnMax * dt) * (brake ? 0.5 : 1) * Math.min(1, wishAmt * 1.5);
+        }
+        let target, k;
+        if (mode === 'dive') { target = DIVE_HSPEED + Math.min(8, Math.max(0, -v.y) * 0.2); k = 0.9; }
+        else if (mode === 'soar') { target = wishAmt > 0.05 ? 8 : 3; k = wishAmt > 0.05 ? 0.8 : 1.6; }
+        else { target = GLIDE_SPEED * (1 - 0.45 * brake) * coldMul; k = hs > target ? (this.swoopT > 0 ? 0.12 : 0.35) : 1.1; }
+        hs += (target - hs) * exp(k, dt);
+        v.x = Math.sin(cur) * hs; v.z = Math.cos(cur) * hs;
+        if (mode === 'soar' && upd) {
+          // the column spirals you round its axis and, unless you steer out, holds you in it
+          const hold = wishAmt > 0.05 ? 0.3 : 1;
+          v.x += (upd.sx * 3 + upd.cx * 9 * hold) * dt; v.z += (upd.sz * 3 + upd.cz * 9 * hold) * dt;
+        }
+        v.x += this.push.x * 0.8 * dt; v.z += this.push.z * 0.8 * dt;
       } else {
         const air = (this.flying ? 8.4 : 7.0) * coldMul;
         const kk = exp(this.flying ? 2.8 : 2.2, dt);
@@ -546,9 +699,14 @@ export class Player {
         v.x += (tx - v.x) * kk; v.z += (tz - v.z) * kk;
         v.x += this.push.x * 0.8 * dt; v.z += this.push.z * 0.8 * dt;
       }
+      if (!this.grounded) this._ribbons(dt);
       const hs = Math.hypot(v.x, v.z);
-      if (hs > SURF_MAX) { v.x *= SURF_MAX / hs; v.z *= SURF_MAX / hs; }
-      this.speed = Math.min(hs, SURF_MAX);
+      // the ground can't carry more than surfing speed; the air can, briefly, after a swoop or boost
+      if (this.grounded && hs > SURF_MAX) { const t = (SURF_MAX + (hs - SURF_MAX) * Math.exp(-4 * dt)) / hs; v.x *= t; v.z *= t; }
+      const cap = !this.grounded && this.swoopT <= 0 && this.boostT <= 0 && mode !== 'dive' ? SWOOP_MAX : AIR_MAX;
+      if (hs > cap) { v.x *= cap / hs; v.z *= cap / hs; }
+      this.speed = Math.min(hs, cap);
+      if (mode === 'dive') this.stats.peakDive = Math.max(this.stats.peakDive, Math.hypot(hs, v.y));
 
       // integrate
       const prevY = p.y;
@@ -566,8 +724,10 @@ export class Player {
       } else if (p.y <= gy && v.y <= 0) {
         const impact = -v.y;
         p.y = gy; v.y = 0; this.grounded = true; this._groundVy = 0;
+        const fromDive = this.mode === 'dive';
+        this.glideLatch = false; this.swoopT = 0; this.mode = 'ground'; this.flying = false;
         if (!wasGrounded && impact > 2.5) {
-          this.events.push({ type: 'land', impact });
+          this.events.push({ type: 'land', impact, dive: fromDive });
           this.squashV -= Math.min(6, impact * 0.55);
         }
       }
@@ -610,7 +770,16 @@ export class Player {
     } else this.turnRate *= Math.exp(-8 * dt);
 
     this.surfK += ((this.surfing ? 1 : 0) - this.surfK) * exp(5, dt);
-    this.flyK += ((!this.grounded ? (this.flying ? 1 : 0.55) : 0) - this.flyK) * exp(this.grounded ? 10 : 4, dt);
+    const md = this.grounded ? 'ground' : this.mode;
+    this.flyK += ((!this.grounded ? (this.flying || md === 'glide' || md === 'soar' || md === 'dive' ? 1 : 0.55) : 0) - this.flyK) * exp(this.grounded ? 10 : 4, dt);
+    const mk = (cur, on, up = 4, down = 6) => cur + ((on ? 1 : 0) - cur) * exp(on ? up : down, dt);
+    this.glideK = mk(this.glideK, md === 'glide', 3.5, this.grounded ? 9 : 4);
+    this.soarK = mk(this.soarK, md === 'soar', 2.5, 2);
+    this.diveK = mk(this.diveK, md === 'dive', 6, 4);
+    this.flutK = mk(this.flutK, md === 'flutter', 6, 4);
+    this.swoopK += ((this.swoopT > 0 ? Math.min(1, this.swoopT) : 0) - this.swoopK) * exp(6, dt);
+    // how much of the pose is driven by a flight mode rather than the walking/jumping rig
+    const airPose = clamp(this.glideK + this.soarK + this.diveK, 0, 1);
 
     // local-space velocity / acceleration
     const sh = Math.sin(this.heading), ch = Math.cos(this.heading);
@@ -622,8 +791,12 @@ export class Player {
     const targetLean = this.flyK * (this.flying ? 0.5 : 0.18) + (1 - this.flyK) * (this.surfK * -0.16 + (1 - this.surfK) * speedLean)
       + clamp(aFwd * 0.012, -0.12, 0.14) * (this.grounded ? 1 : 0.4)
       + clamp(-(this.push.x * sh + this.push.z * ch) * 0.035, -0.1, 0.3);   // bend into a headwind
-    this.lean += (targetLean - this.lean) * exp(7, dt);
-    const targetRoll = clamp(-this.turnRate * this.speed * 0.022, -0.42, 0.42) * (this.grounded ? 1 : 1.3);
+    const modeLean = (this.glideK * 0.62 + this.soarK * 0.18 + this.diveK * 1.25) / Math.max(airPose, 1e-3) + clamp(-v.y * 0.006, -0.05, 0.12) * this.diveK;
+    this.lean += (THREE.MathUtils.lerp(targetLean, modeLean, airPose) - this.lean) * exp(7, dt);
+    // banked turns: gliders lean well into the curve
+    const bankMax = 0.42 + 0.3 * (this.glideK + this.soarK);
+    const targetRoll = clamp(-this.turnRate * this.speed * (0.022 + 0.012 * this.glideK), -bankMax, bankMax) * (this.grounded ? 1 : 1.3)
+      + Math.sin(time * 1.1) * 0.06 * this.soarK;
     this.roll += (targetRoll - this.roll) * exp(6, dt);
 
     // walk cycle: one footfall every STRIDE metres, legs scaled by speed
@@ -665,7 +838,9 @@ export class Player {
     this.group.position.copy(p);
     this.group.rotation.y = this.heading;
     const body = this.body;
-    body.position.set(sideSway, bob + crouch + 0.3 * this.collapse + breathe, 0);
+    // flight poses pivot about the traveler's middle instead of the feet
+    const C = 0.62 * airPose;
+    body.position.set(sideSway, bob + crouch + 0.3 * this.collapse + breathe + C * (1 - Math.cos(this.lean)), -C * Math.sin(this.lean));
     body.rotation.set(this.lean + Math.sin(ph * 2) * 0.03 * sa, Math.sin(ph) * 0.07 * sa, this.roll + 1.4 * this.collapse);
     const sq = 1 + this.squash;
     body.scale.set((1 + this.sing * 0.035) / Math.sqrt(sq), (1 + this.sing * 0.035) * sq, (1 + this.sing * 0.035) / Math.sqrt(sq));
@@ -695,6 +870,22 @@ export class Player {
       fy = THREE.MathUtils.lerp(fy, tuckY, air);
       fz = THREE.MathUtils.lerp(fz, tuckZ, air);
       if (air > 0.01) pitch[i] = THREE.MathUtils.lerp(pitch[i], this.flying ? 0.9 : 0.4, air);
+      // glide / soar: legs trail straight out behind, gently scissoring; dive: knees pulled up tight
+      if (airPose > 0.01) {
+        const gw = (this.glideK + this.soarK) / Math.max(airPose, 1e-3), dw = this.diveK / Math.max(airPose, 1e-3);
+        // hip and body axes in model space (the body is leaning by `lean` about x)
+        const cl = Math.cos(this.lean), sl = Math.sin(this.lean);
+        const hy = body.position.y + HIP_Y * cl, hz = body.position.z + HIP_Y * sl;
+        const sc = Math.sin(time * 2.2 + i * Math.PI) * 0.05;
+        // glide: legs straight down the body axis, gently scissoring; dive: knees drawn up toward the chest
+        const gl = 0.66, dl = 0.3, df = 0.2 + (i === 0 ? 0.05 : -0.02);
+        const gy2 = hy - cl * gl + sl * sc, gz2 = hz - sl * gl - cl * sc;
+        const dy2 = hy - cl * dl - sl * df, dz2 = hz - sl * dl + cl * df;
+        fy = THREE.MathUtils.lerp(fy, gy2 * gw + dy2 * dw, airPose);
+        fz = THREE.MathUtils.lerp(fz, gz2 * gw + dz2 * dw, airPose);
+        fx = THREE.MathUtils.lerp(fx, HIP_X * side * (0.9 * gw + 0.55 * dw), airPose);
+        pitch[i] = THREE.MathUtils.lerp(pitch[i], 1.1 * gw + 1.3 * dw, airPose);
+      }
       // collapse (ending): legs fold under the robe
       fy += 0.3 * this.collapse; fz -= 0.2 * this.collapse;
       // plant on the local slope
@@ -723,7 +914,21 @@ export class Player {
     su.uFlutter.value = clamp(0.25 + this.speed / 12 + this.flyK * 0.8 + wind * 0.4 + this.sing * 0.4, 0, 1.6);
     su.uStride.value = ph;
     su.uStrideAmt.value = sa * Math.min(1, this.speed / 5);
-    su.uFlare.value = this.flyK * (this.flying ? 1 : 0.5) + Math.max(0, -this.squash) * 0.8;
+    su.uFlare.value = (this.flyK * (this.flying ? 1 : 0.5) + Math.max(0, -this.squash) * 0.8) * (1 - this.diveK) + 0.3 * this.soarK;
+    su.uSpread.value = clamp(this.glideK + this.soarK * 0.85, 0, 1) * (1 - this.diveK);
+    su.uTuck.value = this.diveK;
+
+    // sleeve wings: spread wide to glide, beat while fluttering, folded away in a dive and on the ground
+    const spread = clamp(this.glideK + this.soarK * 0.9 + this.flutK * 0.45, 0, 1) * (1 - this.diveK);
+    for (const w of rig.wings) {
+      w.pivot.visible = spread > 0.02;
+      if (!w.pivot.visible) continue;
+      const beat = Math.sin(time * 8.5) * this.flutK;
+      const ripple = Math.sin(time * 3.1 + w.side) * 0.05 * (this.glideK + this.soarK);
+      w.pivot.scale.set(Math.max(0.001, spread), 0.4 + 0.6 * spread, 1);
+      // hang down beside the robe when half-open, out level when fully spread; a little dihedral; beats on flaps
+      w.pivot.rotation.set(0.12 * spread, -w.side * 0.12 * spread, w.side * (-(1 - spread) * 0.9 + ripple + beat * 0.45 + 0.08 * spread));
+    }
 
     // head looks toward points of interest, and the hood tip flops with the motion
     let wantYaw = clamp(-this.turnRate * 0.12, -0.5, 0.5), wantPitch = 0;
@@ -747,7 +952,8 @@ export class Player {
     this.tipV.x += ((tipTx - this.tip.x) * 70 - this.tipV.x * 6) * dt;
     this.tipV.y += ((tipTz - this.tip.y) * 70 - this.tipV.y * 6) * dt;
     this.tip.addScaledVector(this.tipV, dt);
-    rig.tipPivot.rotation.set(-this.tip.x * 0.7 - Math.sin(time * 2.1) * 0.04 * wind, 0, this.tip.y * 0.6);
+    // in fast flight the hood's point streams back along the body
+    rig.tipPivot.rotation.set(-this.tip.x * 0.7 - Math.sin(time * 2.1) * 0.04 * wind - 1.9 * this.diveK - 0.35 * this.glideK, 0, this.tip.y * 0.6);
 
     // shadow
     const shd = this.shadow;
@@ -762,13 +968,56 @@ export class Player {
 
     // scarf
     this._updateAnchor();
-    const flutter = clamp(this.speed / 14 + (this.flying ? 0.7 : 0) + this.sing * 0.4 + wind * 0.3, 0.2, 1.3);
+    const flutter = clamp(this.speed / 14 + (this.flying ? 0.7 : 0) + this.sing * 0.4 + wind * 0.3 + this.diveK * 0.4 + this.boostT * 0.5, 0.2, 1.5);
     this._back.set(-sh, 0, -ch);
-    this.scarf.update(dt, this._anchor, v, flutter, time, this._back, p, this.charge);
+    this.scarf.update(dt, this._anchor, v, flutter, time, this._back, p, Math.max(this.charge * (1 - this.diveK), this.soarK * 0.8, this.boostT > 0 ? 1 : 0));
     this.scarf.uniforms.uCharge.value += (this.charge - this.scarf.uniforms.uCharge.value) * exp(8, dt);
     this.scarf.uniforms.uTime.value = time;
     this.flash = Math.max(0, this.flash - dt * 2.5);
     this.scarf.uniforms.uFlash.value = this.flash;
+  }
+
+  /** Pull out of a dive: the vertical speed swings round into forward speed and a short rising arc. */
+  _swoop(hAbove) {
+    const v = this.vel;
+    const vd = Math.max(0, -v.y);
+    const near = 1 - smooth(4, 24, hAbove);              // pulling out low is worth more
+    const eff = 0.25 + 0.5 * near;
+    const boost = vd * eff;
+    let hs = Math.hypot(v.x, v.z);
+    const dx = hs > 0.5 ? v.x / hs : Math.sin(this.heading), dz = hs > 0.5 ? v.z / hs : Math.cos(this.heading);
+    const before = hs;
+    hs = Math.min(SWOOP_MAX, hs + boost);
+    v.x = dx * hs; v.z = dz * hs;
+    v.y = Math.min(6, 1 + vd * 0.2 * (0.5 + near));
+    this.swoopT = 1.6; this.glideLatch = true;
+    this.squashV += 1.5;
+    this.stats.lastSwoop = { fall: +vd.toFixed(2), before: +before.toFixed(2), after: +hs.toFixed(2), height: +hAbove.toFixed(2), divedFor: +this.diveT.toFixed(2), dropped: +(this.diveTop - this.pos.y).toFixed(2) };
+    if (vd > 6) this.events.push({ type: 'swoop', boost: hs - before, speed: hs });
+  }
+
+  /** Flying close to a cloth creature or another traveler: a short charged boost with a trail. */
+  _ribbons(dt) {
+    if (this.boostCd > 0 || this.frozen || Math.hypot(this.vel.x, this.vel.y, this.vel.z) < RIBBON_MIN_SPEED) return;
+    const list = typeof this.ribbonSources === 'function' ? this.ribbonSources() : this.ribbonSources;
+    if (!list || !list.length) return;
+    const p = this.pos, v = this.vel;
+    for (const s of list) {
+      if (!s || s === p) continue;
+      const dx = s.x - p.x, dy = s.y - (p.y + 0.9), dz = s.z - p.z;
+      if (dx * dx + dy * dy + dz * dz > RIBBON_R * RIBBON_R) continue;
+      if ((this._ribbonCd.get(s) ?? -1e9) > this._clock) continue;
+      this._ribbonCd.set(s, this._clock + RIBBON_CD);
+      const hs = Math.hypot(v.x, v.z);
+      const fx = hs > 0.5 ? v.x / hs : Math.sin(this.heading), fz = hs > 0.5 ? v.z / hs : Math.cos(this.heading);
+      v.x += fx * RIBBON_BOOST; v.z += fz * RIBBON_BOOST;
+      v.y = Math.max(v.y, 0) + 3.5;
+      this.charge = Math.min(1, this.charge + 0.3);
+      this.flash = Math.max(this.flash, 0.7);
+      this.boostT = 1.1; this.boostCd = 2;
+      this.events.push({ type: 'ribbon', x: s.x, y: s.y, z: s.z });
+      return;
+    }
   }
 
   _collide() {

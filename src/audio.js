@@ -132,6 +132,16 @@ export class AudioEngine {
     const af = ctx.createBiquadFilter(); af.type = 'highpass'; af.frequency.value = 1800; af.Q.value = 0.4;
     this.airGain = ctx.createGain(); this.airGain.gain.value = 0;
     this.airSrc.connect(af); af.connect(this.airGain); this.airGain.connect(this.ambBus); this.airSrc.start();
+    // flight modes: a dive whoosh that climbs in pitch with speed, a soft broad wind for gliding, a whistling column
+    const loop = (type, freq, q) => {
+      const src = this._noiseSrc(); const f = ctx.createBiquadFilter(); f.type = type; f.frequency.value = freq; f.Q.value = q;
+      const g = ctx.createGain(); g.gain.value = 0; src.connect(f); f.connect(g); g.connect(this.ambBus); src.start();
+      return { f, g };
+    };
+    this.diveN = loop('bandpass', 500, 1.1);
+    this.glideN = loop('lowpass', 520, 0.5);
+    this.soarN = loop('bandpass', 700, 6);
+    const sl = ctx.createOscillator(); sl.frequency.value = 0.35; const slg = ctx.createGain(); slg.gain.value = 180; sl.connect(slg); slg.connect(this.soarN.f.frequency); sl.start();
     // guardian rumble
     this.rumbleOsc = ctx.createOscillator(); this.rumbleOsc.type = 'sawtooth'; this.rumbleOsc.frequency.value = 41;
     const rf = ctx.createBiquadFilter(); rf.type = 'lowpass'; rf.frequency.value = 180;
@@ -157,6 +167,15 @@ export class AudioEngine {
     this.sandFilter.frequency.setTargetAtTime(1400 + s.speed * 60, t, 0.2);
     this.airGain.gain.setTargetAtTime(s.flying ? 0.09 : 0, t, 0.2);
     this.rumbleGain.gain.setTargetAtTime(Math.min(0.22, s.guardian * 0.22), t, 0.3);
+    // flight modes (all optional in the state, default silent)
+    const dive = s.dive || 0, glide = s.glide || 0, soar = s.soar || 0;
+    const rush = Math.min(1, Math.max(0, (s.airSpeed || 0) - 8) / 32);
+    this.diveN.g.gain.setTargetAtTime(dive * (0.04 + 0.22 * rush), t, 0.12);
+    this.diveN.f.frequency.setTargetAtTime(380 + 2600 * rush * rush * dive, t, 0.15);
+    this.glideN.g.gain.setTargetAtTime(glide * (0.07 + 0.05 * Math.min(1, (s.speed || 0) / 20)), t, 0.4);
+    this.glideN.f.frequency.setTargetAtTime(420 + 25 * (s.speed || 0), t, 0.5);
+    this.soarN.g.gain.setTargetAtTime(soar * 0.11, t, 0.5);
+    this.soarN.f.frequency.setTargetAtTime(650 + 500 * soar, t, 1.5);
     this.rumbleOsc.frequency.setTargetAtTime(38 + s.guardian * 14, t, 0.3);
 
     // singing voice follows the held button
@@ -273,6 +292,32 @@ export class AudioEngine {
   step() { if (!this.ready) return; const t = this.ctx.currentTime; this._noiseBurst(t, 0.09, rand(500, 800), 0.7, 0.05, 'lowpass'); }
   jump() { if (!this.ready) return; const t = this.ctx.currentTime; this._noiseBurst(t, 0.25, 1500, 0.8, 0.05); }
   land(impact) { if (!this.ready) return; const t = this.ctx.currentTime; this._noiseBurst(t, 0.25, 400, 0.7, Math.min(0.14, 0.03 * impact), 'lowpass'); }
+  /** A cloth flap: soft and low for a glide, brisk for a flutter beat. */
+  flap(soft = false) {
+    if (!this.ready) return; const t = this.ctx.currentTime;
+    this._noiseBurst(t, soft ? 0.32 : 0.16, soft ? rand(260, 380) : rand(600, 850), 0.9, soft ? 0.035 : 0.03, 'lowpass');
+  }
+  /** Pulling out of a dive: a falling-then-rising whoosh. */
+  swoop(strength = 1) {
+    if (!this.ready) return; const ctx = this.ctx, t = ctx.currentTime;
+    const s = this._noiseSrc(false); const f = ctx.createBiquadFilter(); f.type = 'bandpass'; f.Q.value = 1.4;
+    f.frequency.setValueAtTime(2200, t); f.frequency.exponentialRampToValueAtTime(500, t + 0.35); f.frequency.exponentialRampToValueAtTime(1300, t + 1.1);
+    const g = ctx.createGain(); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.16 * Math.min(1.3, strength), t + 0.12); g.gain.exponentialRampToValueAtTime(0.0001, t + 1.3);
+    s.connect(f); f.connect(g); g.connect(this.sfxBus); s.start(t); s.stop(t + 1.4);
+  }
+  /** A ribbon boost: a rising run of bells and a bright rush. */
+  ribbon() {
+    if (!this.ready) return; const t = this.ctx.currentTime;
+    const base = 74 + (this.mood === 2 ? -5 : 0);
+    [0, 2, 4, 7, 9, 12].forEach((o, i) => this._bell(base + o, t + i * 0.045, 0.05, 1.6));
+    this._noiseBurst(t, 0.7, 2600, 0.6, 0.05);
+  }
+  /** Caught by an updraft. */
+  liftoff() {
+    if (!this.ready) return; const t = this.ctx.currentTime;
+    [62, 69, 74].forEach((m, i) => this._bell(m + (this.mood === 2 ? -5 : 0), t + i * 0.12, 0.04, 3));
+    this._noiseBurst(t, 1.2, 900, 0.5, 0.06);
+  }
   guardianAlert() {
     if (!this.ready) return; const ctx = this.ctx, t = ctx.currentTime;
     for (const f of [110, 116.5]) {
