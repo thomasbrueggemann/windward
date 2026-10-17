@@ -581,7 +581,7 @@ function frame(nowMs, doRender = true) {
 
     // contextual hints
     const b0 = introBanner;
-    if (b0 && !b0.awakened && Math.hypot(b0.center.x - player.pos.x, b0.center.z - player.pos.z) < 55) showHint('sing', 'Hold <b>E</b> or <b>right-click</b> to sing — the grey cloth will answer.', 9000);
+    if (b0 && !b0.awakened && Math.hypot(b0.center.x - player.pos.x, b0.center.z - player.pos.z) < 55) showHint('sing', input.isTouch ? 'Hold <b>SING</b> — the grey cloth will answer.' : 'Hold <b>E</b> or <b>right-click</b> to sing — the grey cloth will answer.', 9000);
     if (player.pos.z < -2035 && game.state === 'playing') startEnding();
 
     const speedN = clamp(player.speed / 20, 0, 1);
@@ -692,7 +692,11 @@ function begin() {
   const t = $('title'); t.style.opacity = 0; t.style.pointerEvents = 'none';
   setTimeout(() => { t.style.display = 'none'; }, 2400);
   input.allowLock = true;
-  setTimeout(() => showHint('controls', '<b>W A S D</b> walk &nbsp;·&nbsp; <b>mouse</b> look &nbsp;·&nbsp; <b>space</b> jump, hold to fly &nbsp;·&nbsp; <b>E</b> / <b>right-click</b> sing<br>Walk toward the light on the mountain.', 12000), 4200);
+  document.body.classList.add('playing');
+  const ctl = input.isTouch
+    ? '<b>left thumb</b> walk &nbsp;·&nbsp; <b>right thumb</b> look<br><b>FLY</b> jump, hold to fly &nbsp;·&nbsp; <b>SING</b> call out<br>Walk toward the light on the mountain.'
+    : '<b>W A S D</b> walk &nbsp;·&nbsp; <b>mouse</b> look &nbsp;·&nbsp; <b>space</b> jump, hold to fly &nbsp;·&nbsp; <b>E</b> / <b>right-click</b> sing<br>Walk toward the light on the mountain.';
+  setTimeout(() => showHint('controls', ctl, 12000), 4200);
 }
 
 // ------------------------------------------------------------------ pause menu

@@ -136,7 +136,14 @@ export class ChaseCamera {
     // a slight roll into fast carves
     if (player.surfing || player.flying) cam.rotateZ(clamp(-player.turnRate * 0.04, -0.06, 0.06) * Math.min(1, speed / 12));
 
-    const wantFov = (extra.fov ?? 58) + Math.min(14, speed * 0.45) + (player.flying ? 3 : 0);
+    let wantFov = (extra.fov ?? 58) + Math.min(14, speed * 0.45) + (player.flying ? 3 : 0);
+    // portrait screens: widen the vertical FOV so at least ~56 degrees stay visible horizontally
+    const asp = cam.aspect;
+    if (asp < 1.35) {
+      const hNeed = THREE.MathUtils.degToRad(56);
+      const vForH = THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(hNeed / 2) / asp));
+      wantFov = Math.max(wantFov, Math.min(100, vForH));
+    }
     this.fov += (wantFov - this.fov) * exp(3, dt);
     if (Math.abs(cam.fov - this.fov) > 0.02) { cam.fov = this.fov; cam.updateProjectionMatrix(); }
   }

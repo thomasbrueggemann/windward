@@ -3,6 +3,8 @@ export class Input {
   constructor(el) {
     this.keys = new Set();
     this.zoom = 0;
+    this.touchButtons = [];
+    this.isTouch = false;
     this.singTap = false;     // a sing press that may already be released by the next poll
     this.pressedEdge = new Set();
     this.dragging = false;
@@ -44,10 +46,13 @@ export class Input {
   _setupTouch(el) {
     if (!('ontouchstart' in window) && !(navigator.maxTouchPoints > 0)) return;
     const t = this.touch;
+    this.isTouch = true;
     const mk = (label, side, key) => {
       const b = document.createElement('div');
       b.textContent = label;
-      b.style.cssText = `position:fixed;bottom:${side === 'fly' ? 110 : 30}px;right:28px;width:76px;height:76px;border-radius:50%;border:1px solid rgba(255,230,190,.6);color:#ffe9c8;display:flex;align-items:center;justify-content:center;font:12px sans-serif;letter-spacing:.2em;background:rgba(255,200,120,.12);z-index:8;touch-action:none;user-select:none`;
+      b.className = 'touchbtn';
+      b.style.cssText = `bottom:calc(${side === 'fly' ? 128 : 36}px + env(safe-area-inset-bottom));right:calc(26px + env(safe-area-inset-right))`;
+      this.touchButtons.push(b);
       b.addEventListener('touchstart', (e) => { t[key] = true; if (key === 'sing') this.singTap = true; else this.pressedEdge.add('Space'); e.preventDefault(); }, { passive: false });
       b.addEventListener('touchend', (e) => { t[key] = false; e.preventDefault(); });
       document.body.appendChild(b);
