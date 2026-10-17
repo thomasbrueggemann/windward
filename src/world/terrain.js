@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { terrainHeight, terrainHeightFar, trenchAmount, WIND } from './heightfield.js';
+import { FOOTPRINTS } from './layout.js';
 
 export const CHUNK = 64;
 const N = 48;                 // quads per chunk edge
@@ -10,13 +11,16 @@ const SKIRT = 9;
 // ---------------------------------------------------------------- sand shader
 const vert = /* glsl */`
 attribute float aTrench;
+attribute float aCav;
 varying vec3 vWorld;
 varying vec3 vN;
 varying float vTrench;
+varying float vCav;
 void main() {
   vWorld = position;
   vN = normal;
   vTrench = aTrench;
+  vCav = aCav;
   gl_Position = projectionMatrix * viewMatrix * vec4(position, 1.0);
 }`;
 
@@ -30,6 +34,8 @@ uniform vec3 uPoolColor;
 varying vec3 vWorld;
 varying vec3 vN;
 varying float vTrench;
+varying float vCav;
+uniform vec4 uContact[24];
 
 float hash12(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * .1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
 vec2 hash22(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * vec3(.1031, .1030, .0973)); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.xx + p3.yz) * p3.zy); }
@@ -42,9 +48,11 @@ float sat(float x){ return clamp(x, 0., 1.); }
 float glitterLayer(vec2 pxz, float cs, vec3 H, vec3 N){
   vec2 cell = floor(pxz / cs);
   vec2 r = hash22(cell);
-  float present = step(0.82, hash12(cell + 17.3));
-  vec3 rn = normalize(N + (vec3(r.x, hash12(cell + 3.1), r.y) - 0.5) * vec3(1.5, 1.0, 1.5));
-  return present * pow(sat(dot(rn, H)), 140.);
+  float present = step(0.70, hash12(cell + 17.3));
+  vec3 rn = normalize(N + (vec3(r.x, hash12(cell + 3.1), r.y) - 0.5) * vec3(1.6, 1.1, 1.6));
+  vec2 f = fract(pxz / cs) - .5;
+  float disc = smoothstep(0.5, 0.2, length(f));            // round point, soft edge keeps it from crawling
+  return present * disc * pow(sat(dot(rn, H)), 320.);
 }
 
 float aaf(float x){ return 1. - smoothstep(0.7, 2.2, fwidth(x)); }
@@ -64,19 +72,19 @@ vec3 rippleNormal(vec3 N, vec3 P, float dist){
   float r = (s + warp) * 9.5;
   float d1 = cos(r - 0.8 * sin(r)) * (1. - 0.8 * cos(r));
   float rpatch = smoothstep(0.30, 0.62, vnoise(P.xz * 0.045 + 7.));
-  float a1 = (1. - steep * 0.35) * d1 * 0.055 * near * rpatch * aaf(r);
+  float a1 = (1. - steep * 0.35) * d1 * 0.07 * near * rpatch * aaf(r);
   // secondary fine ripples riding the crests, only in the patches
   float rf = (s + warp * 1.4 + sin(s * 3.1) * 0.12) * 29.;
-  float a4 = cos(rf - 0.6 * sin(rf)) * 0.020 * (1. - smoothstep(10., 60., dist)) * rpatch * aaf(rf);
+  float a4 = cos(rf - 0.6 * sin(rf)) * 0.030 * (1. - smoothstep(10., 70., dist)) * rpatch * aaf(rf);
   // larger, softer ripples that survive in the distance
   float rm = (s + warp * 2.) * 1.9;
   float d3 = cos(rm - 0.7 * sin(rm)) * (1. - 0.7 * cos(rm));
   float a3 = d3 * 0.035 * mid * (1. - steep * 0.6) * aaf(rm);
   // wind-swept streaks: noise stretched along the wind
   vec2 sq = vec2(s, dot(P.xz, wp));
-  float st = vnoise(sq * vec2(0.22, 5.5)) * .65 + vnoise(sq * vec2(0.9, 17.)) * .35;
-  gStreak = (st - .5) * (1. - smoothstep(60., 380., dist)) * 2.;
-  float sn = 1. + uSnow * 0.5;
+  float st = vnoise(sq * vec2(0.22, 5.5)) * .65 + vnoise(sq * vec2(0.9, 17.)) * .35 * aaf(sq.y * 107.);
+  gStreak = (st - .5) * (1. - smoothstep(40., 260., dist)) * 2. * aaf(sq.y * 34.);
+  float sn = (1. + uSnow * 0.25) * (1. - 0.4 * uCave);
   vec3 n = N;
   n.xz -= wd * (a1 + a3 + a4) * sn;
   n.xz += wp * gStreak * 0.025 * near;
@@ -98,15 +106,19 @@ void main(){
   // --- phenomenological diffuse: high contrast between warm lit side and saturated shadow side
   float d = sat(dot(N, L) * .5 + .5);
   float dg = sat(dot(Ng, L) * .5 + .5);
-  float tone = smoothstep(0.46, 0.68, mix(dg, d, 0.5));
+  float tone = smoothstep(0.50, 0.62, mix(dg, d, 0.5));
+  float cav = clamp(vCav, -1., 1.), lsun = sat(dot(Ng, L));
   vec3 sand = mix(uShade, uLit, tone);
   sand = mix(sand, uHi, smoothstep(0.80, 1.0, d) * 0.30);
-  sand += uAmb * 0.045;
+  sand += uAmb * (0.045 + 0.095 * (1. - tone) * (0.55 + 0.45 * Ng.y));      // soft sky-coloured fill in the shadow
   // subsurface-ish: saturated glow along the terminator, warm bounce light filling the shadow faces
   float term = exp(-pow((mix(dg, d, 0.5) - 0.57) * 11., 2.));
   sand += uLit * vec3(0.9, 0.42, 0.22) * term * 0.10;
   sand += uLit * (1. - tone) * (0.07 + 0.05 * sat(-N.y * .5 + .5)) * sat(1.6 - dist * 0.002);
   sand *= 1. + gStreak * 0.045;
+  // macro volume: troughs darker, crests lifted, ripples self-shade at grazing light
+  float rsh = clamp((dot(N, L) - dot(Ng, L)) * 5., -.45, .45) * smoothstep(0., .25, dot(Ng, L)) * (1. - smoothstep(40., 260., dist));
+  sand *= (1. - 0.42 * sat(cav)) * (1. + 0.14 * sat(-cav)) * (1. + rsh);
   float cv = vnoise(vWorld.xz * 0.004) * 0.6 + vnoise(vWorld.xz * 0.021) * 0.4;
   sand *= mix(vec3(0.94, 0.88, 0.86), vec3(1.07, 1.01, 0.90), cv);
 
@@ -128,6 +140,15 @@ void main(){
 
   // --- canyon darkness
   col *= mix(1., 0.40, vTrench * uCave);
+  // contact darkening around built footprints
+  float ao = 0.;
+  if (dist < 260.) for (int i = 0; i < 24; i++) {
+    vec4 c = uContact[i];
+    if (c.z <= 0.) break;
+    float dd = length(vWorld.xz - c.xy) - c.z;
+    ao = max(ao, smoothstep(2.6 + c.z * 0.5, -0.3, dd) * 0.5);
+  }
+  col *= 1. - ao * (1. - smoothstep(120., 260., dist));
 
   // --- specular layers: rim + "ocean" sheen, plus glitter
   vec3 H = normalize(L + V);
@@ -142,13 +163,15 @@ void main(){
   vec3 rim = uRim * fres * (0.25 + 0.75 * tone) * 0.55 * (1. - 0.35 * uCave);
   vec3 spec = max(uSunColor * ocean * 0.55, rim);
 
-  float lod = log2(max(dist * 0.0016, 0.012));
+  float px = length(fwidth(vWorld.xz));
+  float lod = log2(max(px * 2.2, 0.004));
   float l0 = floor(lod), f = lod - l0;
   float g = (1. - f) * glitterLayer(vWorld.xz, exp2(l0), H, Ng) + f * glitterLayer(vWorld.xz, exp2(l0 + 1.), H, Ng);
-  vec3 glitter = uGlit * g * 4.5 * uGlitterGain * (0.30 + 0.70 * tone) * (1. - rockAmt);
+  float sunward = 0.55 + 1.1 * pow(sat(dot(-V, L)), 2.);
+  vec3 glitter = uGlit * g * 9. * uGlitterGain * sunward * (0.25 + 1.1 * lsun) * (1. - rockAmt) * (1. - smoothstep(300., 1100., dist));
   // snow crystals: denser, sharper, cool-white twinkle
-  float gs = glitterLayer(vWorld.xz + 31.7, exp2(l0 - 1.), H, N) * (1. - f) + glitterLayer(vWorld.xz + 31.7, exp2(l0), H, N) * f;
-  glitter += vec3(0.9, 0.97, 1.) * gs * 5. * snowAmt * smoothstep(0.1, 0.5, dot(Ng, L));
+  float gs = glitterLayer(vWorld.xz + 31.7, exp2(l0), H, N) * (1. - f) + glitterLayer(vWorld.xz + 31.7, exp2(l0 + 1.), H, N) * f;
+  glitter += vec3(0.9, 0.97, 1.) * gs * 9. * sunward * snowAmt * smoothstep(0.1, 0.5, dot(Ng, L));
 
   float wet = uCave * smoothstep(0.45, 0.7, vnoise(vWorld.xz * 0.05) * .7 + vnoise(vWorld.xz * 0.23) * .3) * (1. - rockAmt);
   col *= 1. - wet * 0.25;
@@ -174,11 +197,12 @@ void main(){
   float cs = sat(dot(-V, L));
   float mie = pow(cs, 6.) * 0.12 + pow(cs, 40.) * 0.22;
   vec3 fogCol = uFog + uSunColor * mie * (0.4 + 0.6 * fogF);
+  fogCol = mix(fogCol, uAmb * 0.75 + uFog * 0.45, smoothstep(0.12, 0.75, fogF) * 0.4 * (1. - cs * 0.7) * (1. - uCave));
   fogCol = mix(fogCol, uAmb * 0.9 + uFog * 0.25, uFogTint * smoothstep(0.1, 0.8, fogF));
   float hz = 1. - exp(-dist * 0.00035 * exp(-max(0., vWorld.y - cameraPosition.y * 0.5) * 0.012));
-  float fogT = sat(fogF + hz * 0.18 * (1. - uCave) * (1. - fogF));
-  vec3 ext = exp(-fd * vec3(0.88, 1.0, 1.18));
-  col = mix(col * mix(vec3(1.), ext, 0.6), fogCol, fogT);
+  vec3 ext = exp(-fd * vec3(0.80, 1.0, 1.4));
+  col = col * ext + fogCol * (1. - ext);
+  col = mix(col, fogCol, sat(hz * 0.30 * (1. - uCave) * (1. - fogF)));
 
   gl_FragColor = vec4(col, 1.0);
 }`;
@@ -192,6 +216,7 @@ export function makeSandUniforms() {
     uRock: { value: new THREE.Color('#5a4a42') }, uSnowCol: { value: new THREE.Color('#eef4fb') }, uAmb: { value: new THREE.Color() },
     uFogD: { value: 0.0005 }, uFogTint: { value: 0 }, uSnow: { value: 0 }, uCave: { value: 0 }, uTime: { value: 0 }, uGlitterGain: { value: 1 },
     uWind: { value: new THREE.Vector2(WIND.x, WIND.z) },
+    uContact: { value: Array.from({ length: 24 }, () => new THREE.Vector4()) },
     uPools: { value: Array.from({ length: 10 }, () => new THREE.Vector4()) }, uPoolColor: { value: new THREE.Color(1.0, 0.62, 0.28) },
   };
 }
@@ -233,7 +258,14 @@ function buildChunkGeometry(cx, cz) {
   }
   const pos = new Float32Array(M * M * 3);
   const nor = new Float32Array(M * M * 3);
-  const tr = new Float32Array(M * M);
+  const tr = new Float32Array(M * M), cv = new Float32Array(M * M);
+  // coarse cavity: neighbours-average minus centre on an 8 m grid (shared formula, so chunk edges match), bilinear to vertices
+  const CG = 11, cav = new Float32Array(9 * 9), hc = new Float32Array(CG * CG);
+  for (let j = 0; j < CG; j++) for (let i = 0; i < CG; i++) hc[j * CG + i] = terrainHeight(x0 + (i - 1) * 8, z0 + (j - 1) * 8);
+  for (let j = 0; j < 9; j++) for (let i = 0; i < 9; i++) {
+    const c = (j + 1) * CG + i + 1;
+    cav[j * 9 + i] = ((hc[c - 1] + hc[c + 1] + hc[c - CG] + hc[c + CG]) * 0.25 - hc[c]) * 0.5;
+  }
   for (let j = 0; j < M; j++) for (let i = 0; i < M; i++) {
     const ci = Math.min(N, Math.max(0, i - 1)), cj = Math.min(N, Math.max(0, j - 1));
     const skirt = (i === 0 || j === 0 || i === M - 1 || j === M - 1);
@@ -247,11 +279,14 @@ function buildChunkGeometry(cx, cz) {
     pos[o * 3] = wx; pos[o * 3 + 1] = h - (skirt ? SKIRT : 0); pos[o * 3 + 2] = wz;
     nor[o * 3] = -dhdx * il; nor[o * 3 + 1] = il; nor[o * 3 + 2] = -dhdz * il;
     tr[o] = trenchAmount(wx, wz);
+    const gx = Math.min(7.999, ci / 6), gz = Math.min(7.999, cj / 6), ix = gx | 0, iz = gz | 0, fx = gx - ix, fz = gz - iz;
+    cv[o] = (cav[iz * 9 + ix] * (1 - fx) + cav[iz * 9 + ix + 1] * fx) * (1 - fz) + (cav[(iz + 1) * 9 + ix] * (1 - fx) + cav[(iz + 1) * 9 + ix + 1] * fx) * fz;
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   g.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
   g.setAttribute('aTrench', new THREE.BufferAttribute(tr, 1));
+  g.setAttribute('aCav', new THREE.BufferAttribute(cv, 1));
   g.setIndex(sharedIndex);
   g.boundingSphere = new THREE.Sphere(
     new THREE.Vector3(x0 + CHUNK / 2, (minY + maxY) / 2, z0 + CHUNK / 2),
@@ -287,7 +322,16 @@ export class Terrain {
     }
   }
 
+  _contacts(px, pz) {
+    if (this._cn === FOOTPRINTS.length && Math.hypot(px - (this._cx ?? 1e9), pz - (this._cz ?? 1e9)) < 3) return;
+    this._cn = FOOTPRINTS.length; this._cx = px; this._cz = pz;
+    const near = FOOTPRINTS.filter((f) => f.r > 0.6 && Math.hypot(f.x - px, f.z - pz) < 300 + f.r).sort((a, b) => Math.hypot(a.x - px, a.z - pz) - Math.hypot(b.x - px, b.z - pz));
+    const arr = this.material.uniforms.uContact.value;
+    for (let i = 0; i < 24; i++) { const f = near[i]; if (f) arr[i].set(f.x, f.z, Math.min(f.r, 14), 1); else arr[i].set(0, 0, 0, 0); }
+  }
+
   update(px, pz, budgetMs = 4) {
+    this._contacts(px, pz);
     const pcx = Math.floor(px / CHUNK), pcz = Math.floor(pz / CHUNK);
     for (const [k, m] of this.chunks) {
       const [cx, cz] = m.userData.c;
@@ -321,7 +365,7 @@ export function buildFarTerrain(material) {
   const xs = lines(-3400, 3400, -1500, 1500, 16, 34);
   const zs = lines(-4300, 900, -3900, -1450, 16, 34).reverse();      // +z (start) first
   const nx = xs.length, nz = zs.length;
-  const pos = new Float32Array(nx * nz * 3), nor = new Float32Array(nx * nz * 3), tr = new Float32Array(nx * nz);
+  const pos = new Float32Array(nx * nz * 3), nor = new Float32Array(nx * nz * 3), tr = new Float32Array(nx * nz), cv = new Float32Array(nx * nz);
   const hs = new Float32Array(nx * nz);
   for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) hs[j * nx + i] = terrainHeightFar(xs[i], zs[j]);
   const at = (i, j) => hs[Math.min(nz - 1, Math.max(0, j)) * nx + Math.min(nx - 1, Math.max(0, i))];
@@ -336,6 +380,7 @@ export function buildFarTerrain(material) {
     const dhdz = (at(i, j1) - at(i, j0)) / (zs[j1] - zs[j0]);
     const il = 1 / Math.hypot(dhdx, 1, dhdz);
     nor[o * 3] = -dhdx * il; nor[o * 3 + 1] = il; nor[o * 3 + 2] = -dhdz * il;
+    cv[o] = ((at(i - 2, j) + at(i + 2, j) + at(i, j - 2) + at(i, j + 2)) * 0.25 - hs[o]) * 0.12;
   }
   const idx = new Uint32Array((nx - 1) * (nz - 1) * 6);
   let k = 0;
@@ -348,6 +393,7 @@ export function buildFarTerrain(material) {
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   g.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
   g.setAttribute('aTrench', new THREE.BufferAttribute(tr, 1));
+  g.setAttribute('aCav', new THREE.BufferAttribute(cv, 1));
   g.setIndex(new THREE.BufferAttribute(idx, 1));
   g.computeBoundingSphere();
   const mesh = new THREE.Mesh(g, material);

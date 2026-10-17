@@ -31,6 +31,9 @@ function $(id) { return document.getElementById(id); }
 const q = new URLSearchParams(location.search);
 
 // ------------------------------------------------------------------ renderer
+// props share the terrain's aerial perspective: blue-ward extinction instead of a flat mix toward the fog colour
+THREE.ShaderChunk.fog_fragment = THREE.ShaderChunk.fog_fragment.replace('gl_FragColor.rgb = mix( gl_FragColor.rgb, fogColor, fogFactor );',
+  'vec3 fogExt = pow(vec3(1.0 - fogFactor), vec3(0.8, 1.0, 1.4)); gl_FragColor.rgb = gl_FragColor.rgb * fogExt + fogColor * (1.0 - fogExt);');
 const canvas = $('c');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
