@@ -48,6 +48,9 @@
   #pause .row { display: flex; align-items: center; justify-content: space-between; gap: 24px; width: min(360px, 80vw); margin: 9px 0; font-size: 12px; letter-spacing: .25em; text-transform: uppercase; opacity: .85; }
   #pause input[type=range] { width: 160px; accent-color: #e9b65a; }
   #pause input[type=checkbox] { accent-color: #e9b65a; width: 16px; height: 16px; }
+  #pause select { appearance: none; background: rgba(255,220,160,.08); color: #ffe9c8; border: 1px solid rgba(255,225,180,.45); padding: 6px 14px; font: inherit; font-size: 11px; letter-spacing: .25em; text-transform: uppercase; cursor: pointer; }
+  #pause select option { background: #2a140a; color: #ffe9c8; }
+  #diffNote { width: min(360px, 80vw); margin: -2px 0 4px; font-size: 10px; letter-spacing: .14em; line-height: 1.6; opacity: .55; text-align: right; }
   #pause .keys { margin-top: 26px; font-size: 11px; line-height: 2; letter-spacing: .18em; opacity: .6; }
   #pause #worldSeed { margin-top: 22px; font-size: 10px; letter-spacing: .35em; text-transform: uppercase; opacity: .38; user-select: text; }
   #pause .keys b { color: #ffd48a; font-weight: 600; }
@@ -77,6 +80,8 @@
   <label class="row">Invert vertical look <input id="invert" type="checkbox"></label>
   <label class="row">Volume <input id="volume" type="range" min="0" max="1" step="0.01"></label>
   <label class="row">Reduce motion <input id="calm" type="checkbox"></label>
+  <label class="row">Challenge <select id="difficulty"><option value="gentle">Gentle</option><option value="journey">Journey</option><option value="trial">Trial</option></select></label>
+  <div id="diffNote"></div>
   <div class="keys"><b>W A S D</b> walk · <b>mouse</b> look · <b>wheel</b> zoom<br><b>space</b> jump — hold to fly on your scarf<br><b>C</b> glide — robe spread, slow sink, fast and free<br><b>shift</b> hold to dive — release near the ground to swoop<br>wind columns lift you · fly close to cloth creatures for a boost<br><b>E</b> / <b>right-click</b> sing — hold and release to call out<br><b>Esc</b> pause</div>
   <button id="resume" class="btn">Resume</button>
   <div id="worldSeed"></div>

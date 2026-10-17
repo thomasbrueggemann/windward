@@ -176,6 +176,20 @@ export function addPlaza(x, z, r0, r1) {
 let groundOverride = null;
 /** Replace the ground with `fn(x, z)` (an interior's floor), or restore the terrain with null. */
 export function setGroundOverride(fn) { groundOverride = fn; }
+/**
+ * Local reshaping of the ground on top of everything else (challenge passages carve chasms, ravines, slopes).
+ * Each mod: { x0, x1, z0, z1, fn(x, z, h, lod) -> h }. Registered at module load, before anything is built on the
+ * ground, so every later terrainHeight() query (ruins, props, chunks) sees the same surface.
+ */
+export const TERRAIN_MODS = [];
+export function addTerrainMod(m) { TERRAIN_MODS.push(m); return m; }
+function applyMods(x, z, h, lod) {
+  for (let i = 0; i < TERRAIN_MODS.length; i++) {
+    const m = TERRAIN_MODS[i];
+    if (x > m.x0 && x < m.x1 && z > m.z0 && z < m.z1) h = m.fn(x, z, h, lod);
+  }
+  return h;
+}
 
 export function terrainHeight(x, z) {
   if (groundOverride) return groundOverride(x, z);
@@ -188,10 +202,10 @@ export function terrainHeight(x, z) {
     const w = 1 - smooth(pl.r0, pl.r1, Math.sqrt(d2));
     h = lerp(h, pl.h, w);
   }
-  return h;
+  return TERRAIN_MODS.length ? applyMods(x, z, h, false) : h;
 }
 
-export function terrainHeightFar(x, z) { return rawHeight(x, z, true); }
+export function terrainHeightFar(x, z) { const h = rawHeight(x, z, true); return TERRAIN_MODS.length ? applyMods(x, z, h, true) : h; }
 
 const _g = { x: 0, z: 0 };
 /** Terrain gradient dh/dx, dh/dz (shared object — copy if you keep it). */
