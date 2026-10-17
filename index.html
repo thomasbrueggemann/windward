@@ -57,8 +57,9 @@
   .touchbtn { position: fixed; width: 78px; height: 78px; border-radius: 50%; border: 1px solid rgba(255,230,190,.55); color: #fff2dc; display: flex; align-items: center; justify-content: center;
     font-size: 11px; letter-spacing: .3em; padding-left: .3em; background: radial-gradient(circle, rgba(255,210,140,.22), rgba(255,180,100,.06)); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
     z-index: 8; touch-action: none; user-select: none; -webkit-user-select: none; opacity: 0; pointer-events: none; transition: opacity 1.2s; text-shadow: 0 0 8px rgba(80,30,0,.6); }
+  .touchbtn.small { width: 62px; height: 62px; font-size: 9px; letter-spacing: .2em; padding-left: .2em; }
   body.playing .touchbtn { opacity: 1; pointer-events: auto; }
-  @media (max-width: 600px) { #hint { left: 16px; right: 110px; font-size: 11px; letter-spacing: .1em; } #title .legal { font-size: 9px; bottom: 10px; } #title .bottom { padding-bottom: 15vh; } }
+  @media (max-width: 600px) { #hint { left: 16px; right: 186px; font-size: 11px; letter-spacing: .1em; } #title .legal { font-size: 9px; bottom: 10px; } #title .bottom { padding-bottom: 15vh; } }
   #err { position: fixed; top: 12px; left: 12px; right: 12px; color: #ffb4a0; font: 12px monospace; white-space: pre-wrap; z-index: 99; pointer-events: none; }
 </style>
 </head>
@@ -75,7 +76,7 @@
   <label class="row">Invert vertical look <input id="invert" type="checkbox"></label>
   <label class="row">Volume <input id="volume" type="range" min="0" max="1" step="0.01"></label>
   <label class="row">Reduce motion <input id="calm" type="checkbox"></label>
-  <div class="keys"><b>W A S D</b> walk · <b>mouse</b> look · <b>wheel</b> zoom<br><b>space</b> jump — hold to fly on your scarf<br><b>E</b> / <b>right-click</b> sing — hold and release to call out<br><b>Esc</b> pause</div>
+  <div class="keys"><b>W A S D</b> walk · <b>mouse</b> look · <b>wheel</b> zoom<br><b>space</b> jump — hold to fly on your scarf<br><b>C</b> glide — robe spread, slow sink, fast and free<br><b>shift</b> hold to dive — release near the ground to swoop<br>wind columns lift you · fly close to cloth creatures for a boost<br><b>E</b> / <b>right-click</b> sing — hold and release to call out<br><b>Esc</b> pause</div>
   <button id="resume" class="btn">Resume</button>
 </div>
 <div id="title" class="overlay">

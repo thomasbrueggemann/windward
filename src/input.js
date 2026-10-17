@@ -10,9 +10,9 @@ export class Input {
     this.dragging = false;
     this.lookX = 0; this.lookY = 0;
     this.mouseSing = false;
-    this.touch = { mx: 0, my: 0, jump: false, sing: false, id: null, ox: 0, oy: 0, lookId: null, lx: 0, ly: 0 };
+    this.touch = { mx: 0, my: 0, jump: false, sing: false, dive: false, id: null, ox: 0, oy: 0, lookId: null, lx: 0, ly: 0 };
     this.enabled = true;
-    this._lastPad = { a: false, start: false };
+    this._lastPad = { a: false, start: false, lb: false };
     this.allowLock = false;
     this.lockedOnce = false;
     const k = (e, down) => {
@@ -47,17 +47,24 @@ export class Input {
     if (!('ontouchstart' in window) && !(navigator.maxTouchPoints > 0)) return;
     const t = this.touch;
     this.isTouch = true;
-    const mk = (label, side, key) => {
+    const mk = (label, bottom, right, key, small = false) => {
       const b = document.createElement('div');
       b.textContent = label;
-      b.className = 'touchbtn';
-      b.style.cssText = `bottom:calc(${side === 'fly' ? 128 : 36}px + env(safe-area-inset-bottom));right:calc(26px + env(safe-area-inset-right))`;
+      b.className = 'touchbtn' + (small ? ' small' : '');
+      b.style.cssText = `bottom:calc(${bottom}px + env(safe-area-inset-bottom));right:calc(${right}px + env(safe-area-inset-right))`;
       this.touchButtons.push(b);
-      b.addEventListener('touchstart', (e) => { t[key] = true; if (key === 'sing') this.singTap = true; else this.pressedEdge.add('Space'); e.preventDefault(); }, { passive: false });
+      b.addEventListener('touchstart', (e) => {
+        t[key] = true;
+        if (key === 'sing') this.singTap = true;
+        else if (key === 'jump') this.pressedEdge.add('Space');
+        else if (key === 'glide') this.pressedEdge.add('KeyC');
+        e.preventDefault();
+      }, { passive: false });
       b.addEventListener('touchend', (e) => { t[key] = false; e.preventDefault(); });
       document.body.appendChild(b);
     };
-    mk('FLY', 'fly', 'jump'); mk('SING', 'sing', 'sing');
+    mk('FLY', 128, 26, 'jump'); mk('SING', 36, 26, 'sing');
+    mk('GLIDE', 150, 116, 'glide', true); mk('DIVE', 70, 116, 'dive', true);
     el.addEventListener('touchstart', (e) => {
       for (const c of e.changedTouches) {
         if (c.clientX < innerWidth * 0.45 && t.id === null) { t.id = c.identifier; t.ox = c.clientX; t.oy = c.clientY; }
@@ -89,6 +96,9 @@ export class Input {
     let my = (k.has('KeyW') || k.has('ArrowUp') ? 1 : 0) - (k.has('KeyS') || k.has('ArrowDown') ? 1 : 0);
     let jump = k.has('Space');
     let sing = k.has('KeyE') || k.has('KeyQ') || k.has('KeyF') || this.mouseSing || this.singTap;
+    // flight modes: Shift held = dive, C (or G) toggles glide
+    let dive = k.has('ShiftLeft') || k.has('ShiftRight') || this.touch.dive;
+    let glidePressed = this.pressedEdge.has('KeyC') || this.pressedEdge.has('KeyG');
     this.singTap = false;
     let lookX = this.lookX, lookY = this.lookY;
     this.lookX = this.lookY = 0;
@@ -102,6 +112,10 @@ export class Input {
       lookX += dz(p.axes[2] || 0) * 14; lookY += dz(p.axes[3] || 0) * 10;
       jump ||= !!(p.buttons[0] && p.buttons[0].pressed) || !!(p.buttons[7] && p.buttons[7].pressed);
       sing ||= !!(p.buttons[2] && p.buttons[2].pressed) || !!(p.buttons[1] && p.buttons[1].pressed) || !!(p.buttons[6] && p.buttons[6].pressed);
+      // RB held = dive, LB / Y toggles glide
+      dive ||= !!(p.buttons[5] && p.buttons[5].pressed);
+      const lb = !!(p.buttons[4] && p.buttons[4].pressed) || !!(p.buttons[3] && p.buttons[3].pressed);
+      glidePressed ||= lb && !this._lastPad.lb; this._lastPad.lb = lb;
       const st = !!(p.buttons[9] && p.buttons[9].pressed);
       padStart = st && !this._lastPad.start; this._lastPad.start = st;
       break;
@@ -114,6 +128,6 @@ export class Input {
     const pausePressed = this.pressedEdge.has('Escape') || this.pressedEdge.has('KeyP') || padStart;
     const zoom = this.zoom; this.zoom = 0;
     this.pressedEdge.clear();
-    return { mx, my, jump, jumpPressed, sing, lookX, lookY, anyKey, pausePressed, zoom };
+    return { mx, my, jump, jumpPressed, sing, dive, glide: false, glidePressed, lookX, lookY, anyKey, pausePressed, zoom };
   }
 }

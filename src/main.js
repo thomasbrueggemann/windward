@@ -20,6 +20,8 @@ import { drawMural } from './murals.js';
 import { makeSoftDot } from './textures.js';
 import { makeGodRaysPass, makeGradePass } from './post.js';
 import { Companion } from './companion.js';
+import { Updrafts } from './world/updrafts.js';
+import { flightFx } from './flightfx.js';
 
 window.addEventListener('error', (e) => { $('err').textContent += (e.message || e) + '\n'; });
 function $(id) { return document.getElementById(id); }
@@ -100,6 +102,16 @@ for (const [z, n] of [[-210, 3], [-330, 2], [-480, 3], [-620, 2], [-780, 2], [-9
 const introBanner = props.banners.find((b) => Math.abs(b.center.z + 140) < 40);
 const guardians = [0.402, 0.60, 0.675].map((p) => { const z = zAtProgress(p); return new Guardian(scene, pathX(z), z, 48); });
 const companion = new Companion(scene, ruins.colliders, ruins.shelters);
+// flight: wind columns lift whoever passes env; cloth creatures and the companion give a ribbon boost when flown close to
+const updrafts = new Updrafts(scene);
+env.updrafts = updrafts;
+const _ribbons = [];
+player.ribbonSources = () => {
+  _ribbons.length = 0;
+  for (const f of flyers.list) if (f.mesh.visible) _ribbons.push(f.mesh.position);
+  if (companion.visible) _ribbons.push(companion.p.pos);
+  return _ribbons;
+};
 
 // ------------------------------------------------------------------ palette
 const ROCK_DESERT = new THREE.Color('#5a4a42'), ROCK_CAVE = new THREE.Color('#14243a'), ROCK_SNOW = new THREE.Color('#4a5670');
@@ -169,6 +181,8 @@ function applySettings() {
 applySettings();
 window.__THREE = THREE;
 window.__game = { hf: { terrainHeight, terrainGradient, pathX }, companion, player, cam, env, scene, camera, game, terrain, renderer, input, props, guardians, flyers, audio, ruins, summitPoint };
+
+window.__game.updrafts = updrafts;
 
 const SAND = new THREE.Color();
 const tmp = new THREE.Vector3();
@@ -568,6 +582,7 @@ function frame(nowMs, doRender = true) {
     player.lookTarget = pickLookTarget();
     player.update(dt, frozen ? { mx: 0, my: 0, jump: false, jumpPressed: false, sing: false } : inp, cam.yaw, time, env);
     playerFx(dt, time);
+    flightFx(player, fx, audio, cam, dt); flightFx(companion.p, fx, audio, cam, dt, { listener: false });
     companionEvents(companion.update(dt, time, player, env, camera, frozen));
     singRings(companion.p, dt);
     if (companion.visible) for (const e of companion.p.events) if (e.type === 'step' && companion.p.grounded) props.addFootprint(e);
@@ -591,11 +606,15 @@ function frame(nowMs, doRender = true) {
     const b0 = introBanner;
     if (b0 && !b0.awakened && Math.hypot(b0.center.x - player.pos.x, b0.center.z - player.pos.z) < 55) showHint('sing', input.isTouch ? 'Hold <b>SING</b> — the grey cloth will answer.' : 'Hold <b>E</b> or <b>right-click</b> to sing — the grey cloth will answer.', 9000);
     if (player.pos.z < -2035 && game.state === 'playing') startEnding();
+    const upd = updrafts.nearest(player.pos);
+    if (upd && upd.dist < 45 && game.hints.controls) showHint('updraft', 'A column of wind. Glide or walk into it and let it carry you up.', 7000);
+    if (!player.grounded && player.charge < 0.02 && game.hints.controls) showHint('glide', input.isTouch ? 'Tap <b>GLIDE</b> to spread your robe · hold <b>DIVE</b> to plunge, release near the ground to swoop.' : 'Press <b>C</b> to glide · hold <b>shift</b> to dive, release near the ground to swoop.', 8000);
 
     const speedN = clamp(player.speed / 20, 0, 1);
     audio.update(dt, {
       progress: prog, snow: env.pal.snow, speed: player.speed, surfing: player.surfing, flying: player.flying,
       singing: player.singing, sing: player.sing, guardian: clamp(1 - nearestG / 70, 0, 1),
+      dive: player.diveK, glide: player.glideK, soar: player.soarK, airSpeed: Math.hypot(player.speed, player.vel.y),
       intensity: clamp(0.2 + 0.45 * speedN + (player.flying ? 0.2 : 0) + prog * 0.35, 0, 1),
     });
     // red flash when a guardian strikes
@@ -637,6 +656,7 @@ function frame(nowMs, doRender = true) {
   ambient.update(dt, time, camera, renderer, player.pos.y, { x: WIND.x * wind, z: WIND.z * wind }, snow * 2.5, clamp(pal.dust * 0.5, 0, 1) * (1 - 0.75 * pal.cave),
     snow > 0.5 ? new THREE.Color(1, 1, 1) : SAND, snow > 0.5 ? 0.12 : 0.07, 0.55);
   sandStreams(dt, pal);
+  updrafts.update(dt, time, camera, renderer, env);
   sparkles.update(dt, camera, renderer);
   dustPool.update(dt, camera, renderer);
 
@@ -702,8 +722,8 @@ function begin() {
   input.allowLock = true;
   document.body.classList.add('playing');
   const ctl = input.isTouch
-    ? '<b>left thumb</b> walk &nbsp;·&nbsp; <b>right thumb</b> look<br><b>FLY</b> jump, hold to fly &nbsp;·&nbsp; <b>SING</b> call out<br>Walk toward the light on the mountain.'
-    : '<b>W A S D</b> walk &nbsp;·&nbsp; <b>mouse</b> look &nbsp;·&nbsp; <b>space</b> jump, hold to fly &nbsp;·&nbsp; <b>E</b> / <b>right-click</b> sing<br>Walk toward the light on the mountain.';
+    ? '<b>left thumb</b> walk &nbsp;·&nbsp; <b>right thumb</b> look<br><b>FLY</b> jump, hold to fly &nbsp;·&nbsp; <b>GLIDE</b> spread robe &nbsp;·&nbsp; <b>DIVE</b> hold to plunge &nbsp;·&nbsp; <b>SING</b> call out<br>Walk toward the light on the mountain.'
+    : '<b>W A S D</b> walk &nbsp;·&nbsp; <b>mouse</b> look &nbsp;·&nbsp; <b>space</b> jump, hold to fly &nbsp;·&nbsp; <b>E</b> / <b>right-click</b> sing<br><b>C</b> glide &nbsp;·&nbsp; <b>shift</b> hold to dive, release to swoop<br>Walk toward the light on the mountain.';
   setTimeout(() => showHint('controls', ctl, 12000), 4200);
 }
 

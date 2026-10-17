@@ -19,7 +19,7 @@ export class Companion {
     for (let i = 0; i < 4; i++) this.p.addGlyph();
     this.p.setVisible(false);
     this.state = 'hidden';
-    this.inp = { mx: 0, my: 0, jump: false, jumpPressed: false, sing: false };
+    this.inp = { mx: 0, my: 0, jump: false, jumpPressed: false, sing: false, dive: false, glide: false, glidePressed: false };
     this.side = 1;
     this.waitT = 0; this.stuckT = 0; this.flyHold = 0; this.singHold = 0;
     this.replyT = -1; this.replyBig = false; this.callT = 8;
@@ -70,6 +70,9 @@ export class Companion {
     const dx = pp.x - cp.x, dz = pp.z - cp.z, d = Math.hypot(dx, dz);
     const inp = this.inp;
     inp.mx = inp.my = 0; inp.jumpPressed = false; inp.jump = false; inp.sing = false;
+    inp.dive = false; inp.glidePressed = false;
+    // mirror the player's flight: spread the robe while they glide or soar
+    inp.glide = !c.grounded && (player.mode === 'glide' || player.mode === 'soar');
 
     // ----- hearing the player sing: answer after a short, human-feeling delay
     if (player.singing && !this.lastPlayerSing) { this.playerSingT = 0; if (d < 45 && this.replyT < 0) { this.replyT = 0.35 + Math.random() * 0.5; this.replyBig = false; } }

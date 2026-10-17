@@ -67,6 +67,8 @@ export class ChaseCamera {
     this.pitch = clamp(this.pitch + ly * 0.0028 * this.sens, -0.2, 1.2);
 
     const speed = player.speed;
+    // flight modes (0..1 blends; companions and older callers may not have them)
+    const glide = (player.glideK || 0) + 0.8 * (player.soarK || 0), dive = player.diveK || 0, swoop = player.swoopK || 0;
     if (!extra.noFollow && this.idle > 1.0 && speed > 1.2) {
       const target = player.heading + Math.PI;
       let d = target - this.yaw; d = Math.atan2(Math.sin(d), Math.cos(d));
@@ -75,11 +77,12 @@ export class ChaseCamera {
       this.yaw += d * exp(0.9 * Math.min(1, speed / 6) * facingCam, dt);
     }
     if (this.idle > 2.0) {
-      const rp = this.restPitch + (player.flying ? 0.14 : 0) + (player.surfing ? -0.05 : 0);
+      const rp = this.restPitch + (player.flying ? 0.14 : 0) + (player.surfing ? -0.05 : 0) + glide * 0.06 + dive * 0.22;
       this.pitch += (rp - this.pitch) * exp(0.7, dt);
     }
 
-    const wantDist = (extra.dist ?? this.baseDist) + Math.min(4.5, speed * 0.15) + (player.flying ? 2.4 : 0);
+    // glide pulls well back to show the landscape; a dive tucks in slightly so the plunge feels close
+    const wantDist = (extra.dist ?? this.baseDist) + Math.min(4.5, speed * 0.15) + (player.flying ? 2.4 : 0) + glide * 4.0 - dive * 1.5;
     this.dist += (wantDist - this.dist) * exp(2, dt);
 
     // focus point: the traveler, led slightly in the direction of travel; vertical motion is softened so jumps
@@ -89,10 +92,12 @@ export class ChaseCamera {
     this.ahead.x += (v.x * 0.22 - this.ahead.x) * exp(2.5, dt);
     this.ahead.z += (v.z * 0.22 - this.ahead.z) * exp(2.5, dt);
     if (!this.ready) this.focusY = pp.y;
-    const yRate = player.grounded ? 9 : player.flying ? 3.5 : 2.2;
+    const yRate = player.grounded ? 9 : player.flying ? 3.5 : 2.2 + dive * 5 + glide * 0.8;
     this.focusY += (pp.y - this.focusY) * exp(yRate, dt);
     if (Math.abs(pp.y - this.focusY) > 6) this.focusY = pp.y - Math.sign(pp.y - this.focusY) * 6;
-    this.target.set(pp.x + this.ahead.x, this.focusY + (extra.height ?? 1.5), pp.z + this.ahead.z);
+    // in a dive, lead the plunge so the traveler stays in frame and the ground rushes up into view
+    this.aheadY = (this.aheadY || 0) + ((dive > 0.05 ? Math.max(-6, v.y * 0.16) * dive : 0) - (this.aheadY || 0)) * exp(4, dt);
+    this.target.set(pp.x + this.ahead.x, this.focusY + (extra.height ?? 1.5) + this.aheadY, pp.z + this.ahead.z);
 
     // terrain occlusion: if a dune would hide the traveler, raise the camera over it
     const pitch = this.pitch;
@@ -119,7 +124,7 @@ export class ChaseCamera {
     const k = exp(extra.follow ?? 8, dt);
     this.pos.x += (want.x - this.pos.x) * k;
     this.pos.z += (want.z - this.pos.z) * k;
-    this.pos.y += (want.y - this.pos.y) * exp(6, dt);
+    this.pos.y += (want.y - this.pos.y) * exp(6 + 8 * dive, dt);
     const minY = terrainHeight(this.pos.x, this.pos.z) + 1.0;
     if (this.pos.y < minY) this.pos.y = minY;
 
@@ -135,9 +140,15 @@ export class ChaseCamera {
     if (extra.lookAt) this.look.lerp(extra.lookAt, extra.lookK ?? 0.5);
     cam.lookAt(this.look);
     // a slight roll into fast carves
-    if ((player.surfing || player.flying) && !this.calm) cam.rotateZ(clamp(-player.turnRate * 0.04, -0.06, 0.06) * Math.min(1, speed / 12));
+    if ((player.surfing || player.flying || glide > 0.05) && !this.calm) {
+      const rollMax = 0.06 + 0.05 * Math.min(1, glide);
+      cam.rotateZ(clamp(-player.turnRate * (0.04 + 0.03 * Math.min(1, glide)), -rollMax, rollMax) * Math.min(1, speed / 12));
+    }
+    // a dive rattles the view a little, faster = more (never with reduced motion)
+    if (dive > 0.05 && !this.calm) this.shake = Math.max(this.shake, dive * 0.32 * clamp((Math.hypot(speed, player.vel.y) - 12) / 24, 0, 1));
 
-    let wantFov = (extra.fov ?? 58) + (this.calm ? 0 : Math.min(14, speed * 0.45) + (player.flying ? 3 : 0));
+    let wantFov = (extra.fov ?? 58) + glide * 7 + (this.calm ? 0 : Math.min(14, speed * 0.45) + (player.flying ? 3 : 0)
+      + dive * clamp(-player.vel.y * 0.35, 0, 12) + swoop * 6);
     // portrait screens: widen the vertical FOV so at least ~56 degrees stay visible horizontally
     const asp = cam.aspect;
     if (asp < 1.35) {
@@ -145,7 +156,7 @@ export class ChaseCamera {
       const vForH = THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(hNeed / 2) / asp));
       wantFov = Math.max(wantFov, Math.min(100, vForH));
     }
-    this.fov += (wantFov - this.fov) * exp(3, dt);
+    this.fov += (wantFov - this.fov) * exp(dive > 0.3 || swoop > 0.3 ? 5 : 3, dt);
     if (Math.abs(cam.fov - this.fov) > 0.02) { cam.fov = this.fov; cam.updateProjectionMatrix(); }
   }
 }
