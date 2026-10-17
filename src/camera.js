@@ -17,6 +17,7 @@ export class ChaseCamera {
     this.baseDist = 8;
     this.sens = 1;
     this.invertY = false;
+    this.calm = false;          // reduce motion: no shake, no speed FOV kick, no roll
     this.target = new THREE.Vector3();
     this.ahead = new THREE.Vector3();
     this.focusY = 0;
@@ -125,7 +126,7 @@ export class ChaseCamera {
     this.shake = Math.max(0, this.shake - dt * 1.6);
     const cam = this.camera;
     cam.position.copy(this.pos);
-    if (this.shake > 0) {
+    if (this.shake > 0 && !this.calm) {
       const s = this.shake * this.shake * 0.35;
       cam.position.x += Math.sin(time * 61) * s; cam.position.y += Math.sin(time * 53 + 1) * s;
     }
@@ -134,9 +135,9 @@ export class ChaseCamera {
     if (extra.lookAt) this.look.lerp(extra.lookAt, extra.lookK ?? 0.5);
     cam.lookAt(this.look);
     // a slight roll into fast carves
-    if (player.surfing || player.flying) cam.rotateZ(clamp(-player.turnRate * 0.04, -0.06, 0.06) * Math.min(1, speed / 12));
+    if ((player.surfing || player.flying) && !this.calm) cam.rotateZ(clamp(-player.turnRate * 0.04, -0.06, 0.06) * Math.min(1, speed / 12));
 
-    let wantFov = (extra.fov ?? 58) + Math.min(14, speed * 0.45) + (player.flying ? 3 : 0);
+    let wantFov = (extra.fov ?? 58) + (this.calm ? 0 : Math.min(14, speed * 0.45) + (player.flying ? 3 : 0));
     // portrait screens: widen the vertical FOV so at least ~56 degrees stay visible horizontally
     const asp = cam.aspect;
     if (asp < 1.35) {

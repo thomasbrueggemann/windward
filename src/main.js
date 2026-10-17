@@ -160,10 +160,10 @@ for (let i = 0; i < +(q.get('glyphs') ?? 0); i++) player.addGlyph();
 const game = { state: 'title', time: 0, visionT: 0, visionIdx: 0, hints: {}, singHold: 0, chapter: -1, gust: 0, gustT: 14, gustDir: new THREE.Vector3(), whiteout: 0 };
 
 // ------------------------------------------------------------------ settings (persisted per browser)
-const settings = { sens: 1, invertY: false, volume: 0.85 };
+const settings = { sens: 1, invertY: false, volume: 0.85, calm: false };
 try { Object.assign(settings, JSON.parse(localStorage.getItem('journey-settings') || '{}')); } catch (e) { /* storage unavailable */ }
 function applySettings() {
-  cam.sens = settings.sens; cam.invertY = settings.invertY; audio.setVolume && audio.setVolume(settings.volume);
+  cam.sens = settings.sens; cam.invertY = settings.invertY; cam.calm = settings.calm; audio.setVolume && audio.setVolume(settings.volume);
   try { localStorage.setItem('journey-settings', JSON.stringify(settings)); } catch (e) { /* storage unavailable */ }
 }
 applySettings();
@@ -723,8 +723,9 @@ function togglePause(force) {
   }
 }
 $('resume').addEventListener('click', () => togglePause(false));
-const sensEl = $('sens'), invEl = $('invert'), volEl = $('volume');
-sensEl.value = settings.sens; invEl.checked = settings.invertY; volEl.value = settings.volume;
+const sensEl = $('sens'), invEl = $('invert'), volEl = $('volume'), calmEl = $('calm');
+sensEl.value = settings.sens; invEl.checked = settings.invertY; volEl.value = settings.volume; calmEl.checked = settings.calm;
+calmEl.addEventListener('change', () => { settings.calm = calmEl.checked; applySettings(); });
 sensEl.addEventListener('input', () => { settings.sens = +sensEl.value; applySettings(); });
 invEl.addEventListener('change', () => { settings.invertY = invEl.checked; applySettings(); });
 volEl.addEventListener('input', () => { settings.volume = +volEl.value; applySettings(); });
