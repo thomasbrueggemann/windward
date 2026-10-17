@@ -11,21 +11,41 @@ const fragCommon = /* glsl */`
 precision highp float;
 uniform float uTime, uFogD;
 uniform vec3 uSunDir, uSunColor, uAmb, uFog;
-varying vec2 vUv; varying float vGlow; varying vec3 vN; varying vec3 vW;
+float h21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5); }
+float vnz(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3. - 2. * f); return mix(mix(h21(i), h21(i + vec2(1, 0)), f.x), mix(h21(i + vec2(0, 1)), h21(i + vec2(1, 1)), f.x), f.y); }
+/** plain weave: x = thread relief (-1..1), faded with distance so it never shimmers */
+float weaveRelief(vec2 uv, vec2 f, float dist) { return sin(uv.x * f.x) * sin(uv.y * f.y) * (1. - smoothstep(4., 18., dist)); }
+/** soft translucency + velvet sheen shared by all the cloth creatures */
+vec3 clothLight(vec3 base, vec3 N, vec3 V, float thin) {
+  vec3 L = normalize(uSunDir);
+  float ndl = dot(N, L);
+  float diff = max(ndl, 0.) * 0.6 + pow(max(-ndl, 0.), 2.) * 0.6;
+  vec3 col = base * (uAmb * 0.5 + uSunColor * (0.2 + diff));
+  col += base * vec3(1.3, 0.5, 0.22) * uSunColor * pow(clamp(-dot(V, L), 0., 1.), 3.) * (0.45 + 0.55 * (1. - abs(dot(V, N)))) * thin * 0.55;
+  float fres = pow(1. - abs(dot(V, N)), 2.6);
+  col += vec3(1.0, 0.5, 0.28) * (uSunColor * 0.7 + uAmb * 0.35) * fres * 0.3;
+  return col;
+}
 `;
 
+
 export const clothFrag = fragCommon + /* glsl */`
+varying vec2 vUv; varying float vGlow; varying vec3 vN; varying vec3 vW;
 void main() {
-  vec3 N = normalize(vN); if (!gl_FrontFacing) N = -N;
+  vec3 V = cameraPosition - vW; float dist = length(V); V /= dist;
+  vec3 Ng = normalize(cross(dFdx(vW), dFdy(vW))); if (dot(Ng, vN) < 0.) Ng = -Ng;
+  vec3 N = normalize(mix(normalize(vN), Ng, 0.6)); if (!gl_FrontFacing) N = -N;
+  float wv = weaveRelief(vUv, vec2(520., 520.), dist);
+  float dye = vnz(vUv * vec2(6., 18.)) * 0.6 + vnz(vUv * vec2(23., 70.)) * 0.4;
   vec3 base = mix(vec3(0.42, 0.03, 0.02), vec3(0.95, 0.17, 0.05), vUv.x * 0.6 + 0.4 * (0.5 + 0.5 * sin(vUv.y * 12.)));
-  float line = smoothstep(0.07, 0.0, abs(vUv.y - 0.5)) + 0.6 * smoothstep(0.035, 0.0, abs(vUv.y - 0.2)) + 0.6 * smoothstep(0.035, 0.0, abs(vUv.y - 0.8));
+  base *= 0.7 + 0.3 * dye + 0.07 * wv;
+  float dash = step(0.35, fract(vUv.x * 26. + 0.5));
+  float line = smoothstep(0.06, 0.0, abs(vUv.y - 0.5)) + 0.7 * dash * (smoothstep(0.022, 0.0, abs(vUv.y - 0.2)) + smoothstep(0.022, 0.0, abs(vUv.y - 0.8)));
   line *= smoothstep(0.0, 0.12, vUv.x) * smoothstep(1.0, 0.88, vUv.x);
-  vec3 L = normalize(uSunDir);
-  float diff = max(dot(N, L), 0.) * 0.6 + pow(max(dot(-N, L), 0.), 2.) * 0.6;
-  vec3 col = base * (uAmb * 0.5 + uSunColor * (0.2 + diff));
-  col += line * mix(vec3(0.7, 0.28, 0.1), vec3(3.2, 2.3, 1.2), vGlow);
-  col += vGlow * 0.35 * base;
-  float dist = length(cameraPosition - vW);
+  vec3 col = clothLight(base, N, V, 0.8);
+  vec3 ember = mix(vec3(0.7, 0.28, 0.1), vec3(3.2, 2.3, 1.2), vGlow);
+  col += line * ember * (0.85 + 0.15 * wv);
+  col += vGlow * 0.35 * base + vGlow * vGlow * vec3(0.5, 0.25, 0.08) * (1. - abs(dot(V, N)));
   col = mix(col, uFog, 1. - exp(-pow(dist * uFogD, 2.)));
   gl_FragColor = vec4(col, 1.);
 }`;
@@ -67,24 +87,26 @@ export function makeFloatingCloth(scene, capacity = 120) {
 }
 
 // ------------------------------------------------------------- big dormant cloth banners
-const bannerFrag = /* glsl */`
-precision highp float;
-uniform float uTime, uFogD, uAwake, uPulse;
-uniform vec3 uSunDir, uSunColor, uAmb, uFog;
+const bannerFrag = fragCommon + /* glsl */`
+uniform float uAwake, uPulse;
 varying vec2 vUv; varying vec3 vN; varying vec3 vW;
 void main() {
+  vec3 V = cameraPosition - vW; float dist = length(V); V /= dist;
   vec3 N = normalize(vN); if (!gl_FrontFacing) N = -N;
-  vec3 gray = vec3(0.36, 0.35, 0.34) * (0.85 + 0.15 * sin(vUv.x * 60. + vUv.y * 6.));
-  vec3 red = mix(vec3(0.5, 0.04, 0.02), vec3(1.0, 0.2, 0.06), 0.5 + 0.5 * sin(vUv.x * 14. + uTime));
+  float wv = weaveRelief(vUv, vec2(1900., 380.), dist);
+  float dye = vnz(vUv * vec2(40., 7.)) * 0.6 + vnz(vUv * vec2(160., 30.)) * 0.4;
+  vec3 gray = vec3(0.36, 0.35, 0.34) * (0.85 + 0.15 * sin(vUv.x * 60. + vUv.y * 6.)) * (0.8 + 0.35 * dye) * (1. + 0.08 * wv);
+  vec3 red = mix(vec3(0.5, 0.04, 0.02), vec3(1.0, 0.2, 0.06), 0.5 + 0.5 * sin(vUv.x * 14. + uTime)) * (0.8 + 0.35 * dye) * (1. + 0.08 * wv);
   vec3 base = mix(gray, red, smoothstep(0.0, 1.0, uAwake));
   float line = smoothstep(0.05, 0.0, abs(vUv.y - 0.5)) + smoothstep(0.03, 0.0, abs(vUv.y - 0.12)) + smoothstep(0.03, 0.0, abs(vUv.y - 0.88));
   float dash = step(0.5, fract(vUv.x * 36.));
-  vec3 L = normalize(uSunDir);
-  float diff = max(dot(N, L), 0.) * 0.6 + pow(max(dot(-N, L), 0.), 2.) * 0.6;
-  vec3 col = base * (uAmb * 0.5 + uSunColor * (0.2 + diff));
-  col += line * dash * mix(vec3(0.15), vec3(2.8, 1.9, 1.0), uAwake) * (1. + uPulse * 1.5);
+  // glyph row between the stitched borders: small diamonds that light up as the cloth wakes
+  vec2 gp = vec2(fract(vUv.x * 18.) - 0.5, (vUv.y - 0.31) * 5.);
+  float glyph = smoothstep(0.08, 0.0, abs(abs(gp.x) + abs(gp.y) - 0.34)) * step(abs(vUv.y - 0.31), 0.1) + smoothstep(0.08, 0.0, abs(abs(gp.x) + abs(vUv.y * 5. - 3.75) - 0.34)) * step(abs(vUv.y - 0.75), 0.1);
+  vec3 col = clothLight(base, N, V, 0.9);
+  vec3 glow = mix(vec3(0.15), vec3(2.8, 1.9, 1.0), uAwake) * (1. + uPulse * 1.5);
+  col += line * dash * glow + glyph * glow * 0.8;
   col += uPulse * 0.4 * base;
-  float dist = length(cameraPosition - vW);
   col = mix(col, uFog, 1. - exp(-pow(dist * uFogD, 2.)));
   gl_FragColor = vec4(col, 1.);
 }`;

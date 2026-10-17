@@ -35,8 +35,8 @@ const POINTS_PER = 340, RIBBONS_PER = 4, RIB_SEG = 40;
 
 const pointVert = /* glsl */`
 attribute vec4 aCol; attribute vec4 aSeed; attribute float aR;
-uniform float uTime, uScale, uFogD;
-varying vec4 vC;
+uniform float uTime, uScale, uFogD, uAspect;
+varying vec4 vC; varying vec2 vDir; varying float vStr;
 void main() {
   float h = aCol.w;
   float hf = fract(aSeed.y + uTime * (0.05 + 0.07 * aSeed.w) * (40. / h));
@@ -44,21 +44,27 @@ void main() {
   float rad = aR * (0.2 + 0.95 * aSeed.z) * (0.7 + 0.6 * hf);
   vec3 w = vec3(aCol.x + cos(ang) * rad, aCol.y + hf * h, aCol.z + sin(ang) * rad);
   vec4 mv = viewMatrix * vec4(w, 1.);
-  gl_Position = projectionMatrix * mv;
+  vec4 clip = projectionMatrix * mv; gl_Position = clip;
+  // motes are streaked along their climb (world up, as seen on screen)
+  vec4 c2 = projectionMatrix * viewMatrix * vec4(w + vec3(0., 0.5, 0.), 1.);
+  vec2 sd = c2.xy / c2.w - clip.xy / clip.w; sd.x *= uAspect;
+  vDir = dot(sd, sd) > 1e-12 ? normalize(sd) : vec2(0., 1.);
   float gold = step(0.6, aSeed.w);
   float a = smoothstep(0., 0.07, hf) * smoothstep(1., 0.7, hf);
   float dist = -mv.z;
   a *= exp(-pow(dist * uFogD * 1.4, 2.)) * smoothstep(1.5, 5., dist);
   vC = mix(vec4(1.0, 0.8, 0.55, 0.5 * a), vec4(2.6, 1.9, 1.0, 0.95 * a), gold);
-  gl_PointSize = clamp(mix(0.42, 0.17, gold) * uScale / max(0.1, dist), 1., 60.);
+  float base = mix(0.42, 0.17, gold) * uScale / max(0.1, dist), ps = clamp(base * mix(1.5, 2.6, gold), 1., 90.);
+  gl_PointSize = ps; vStr = max(1., ps / max(base, 1.));
 }`;
 const pointFrag = /* glsl */`
 precision highp float;
-varying vec4 vC;
+varying vec4 vC; varying vec2 vDir; varying float vStr;
 void main() {
-  float d = length(gl_PointCoord - 0.5) * 2.;
-  float a = smoothstep(1., 0., d);
-  gl_FragColor = vec4(vC.rgb, vC.a * a * a);
+  vec2 p = (gl_PointCoord - 0.5) * 2.; p.y = -p.y;
+  vec2 q = vec2(dot(p, vDir), dot(p, vec2(-vDir.y, vDir.x))); q.y *= vStr;
+  float a = smoothstep(1., 0., length(q)); a *= a * (0.4 + 0.6 * smoothstep(-1., 1., q.x));
+  gl_FragColor = vec4(vC.rgb, vC.a * a);
 }`;
 
 const ribbonVert = /* glsl */`
@@ -90,11 +96,13 @@ precision highp float;
 uniform float uTime, uFogD;
 varying vec3 vN; varying vec3 vW; varying float vY;
 void main() {
+  float ang = atan(vN.z, vN.x);
   vec3 V = normalize(cameraPosition - vW);
   float side = pow(1. - abs(dot(normalize(vN), V)), 1.5);
   float d = length(cameraPosition - vW);
   float a = side * smoothstep(0., 0.15, vY) * smoothstep(1., 0.55, vY) * 0.34 * smoothstep(3., 14., d) * exp(-pow(d * uFogD, 2.));
-  a *= 0.8 + 0.2 * sin(vY * 30. - uTime * 3.);
+  a *= 0.75 + 0.25 * sin(vY * 30. - uTime * 3.);
+  a *= 0.55 + 0.45 * sin(ang * 3. + vY * 9. - uTime * 1.6) * sin(ang * 5. - vY * 5. + uTime * 0.9);   // slow spiralling streaks of wind-borne sand
   gl_FragColor = vec4(vec3(1.0, 0.75, 0.45) * a, a);
 }`;
 
@@ -104,7 +112,7 @@ export class Updrafts {
     this.group = new THREE.Group();
     scene.add(this.group);
     this.cols = [];
-    this.pointU = { uTime: { value: 0 }, uScale: { value: 600 }, uFogD: { value: 0.0005 } };
+    this.pointU = { uTime: { value: 0 }, uScale: { value: 600 }, uAspect: { value: 1 }, uFogD: { value: 0.0005 } };
     this.shaftU = { uTime: { value: 0 }, uFogD: { value: 0.0005 } };
     this.setPositions(positions);
   }
@@ -232,6 +240,7 @@ export class Updrafts {
     const fogD = env && env.pal ? env.pal.fogD : 0.0005;
     this.pointU.uFogD.value = fogD; this.shaftU.uFogD.value = fogD;
     const h = renderer.domElement.height;
+    this.pointU.uAspect.value = renderer.domElement.width / h;
     this.pointU.uScale.value = h / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2));
   }
 }

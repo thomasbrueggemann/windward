@@ -85,9 +85,31 @@ export function makeSoftDot() {
   return tex(c);
 }
 
-/** Robe: deep red cloth, gold geometric hem, a gold band down the front (u = 0 / 1 is the front). */
+/** Tileable plain-weave normal map (warp/weft threads with fibre grain): the robe's micro structure. */
+export function makeWeaveNormal() {
+  const S = 128, T = 8, c = canvas(S, S), g = c.getContext('2d');
+  const r = rng(23), h = new Float32Array(S * S);
+  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+    const over = (Math.floor(x / T) + Math.floor(y / T)) & 1;
+    const warp = Math.sin((x % T + 0.5) / T * Math.PI), weft = Math.sin((y % T + 0.5) / T * Math.PI);
+    h[y * S + x] = (over ? warp * (0.6 + 0.4 * weft) : weft * (0.6 + 0.4 * warp)) * 0.8 + (r() - 0.5) * 0.18;
+  }
+  const img = g.createImageData(S, S), k = 2.2;
+  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+    const dx = h[y * S + (x + 1) % S] - h[y * S + (x + S - 1) % S], dy = h[((y + 1) % S) * S + x] - h[((y + S - 1) % S) * S + x];
+    const n = Math.hypot(dx * k, dy * k, 1), o = (y * S + x) * 4;
+    img.data[o] = (-dx * k / n * 0.5 + 0.5) * 255; img.data[o + 1] = (dy * k / n * 0.5 + 0.5) * 255; img.data[o + 2] = (1 / n * 0.5 + 0.5) * 255; img.data[o + 3] = 255;
+  }
+  g.putImageData(img, 0, 0);
+  const t = tex(c, false); t.wrapS = t.wrapT = THREE.RepeatWrapping; return t;
+}
+
+/** Robe: deep red cloth, gold geometric hem, a gold band down the front (u = 0 / 1 is the front).
+ *  userData.mr holds a roughness(G)/metalness(B) map: gold embroidery is glossier and slightly metallic. */
 export function makeRobeTexture(white = false) {
   const W = 512, H = 256, c = canvas(W, H), g = c.getContext('2d');
+  const mc = canvas(W, H), m = mc.getContext('2d'), GM = 'rgb(0,105,150)';
+  m.fillStyle = 'rgb(0,205,0)'; m.fillRect(0, 0, W, H);
   const gr = g.createLinearGradient(0, 0, 0, H);
   if (white) { gr.addColorStop(0, '#fbf6ee'); gr.addColorStop(1, '#e2d9ca'); }
   else { gr.addColorStop(0, '#b8341a'); gr.addColorStop(0.5, '#9e2614'); gr.addColorStop(1, '#7a1a0c'); }
@@ -105,6 +127,7 @@ export function makeRobeTexture(white = false) {
   const gold = white ? '#cdbd94' : '#e9b65a', goldDark = white ? '#9c8b64' : '#7d2e10';
   // gold hem band (canvas bottom == hem)
   g.fillStyle = gold; g.fillRect(0, H - 30, W, 30);
+  m.fillStyle = GM; m.fillRect(0, H - 30, W, 30);
   g.fillStyle = goldDark;
   for (let x = 0; x < W; x += 16) { g.beginPath(); g.moveTo(x, H - 30); g.lineTo(x + 8, H - 9); g.lineTo(x + 16, H - 30); g.fill(); }
   g.fillRect(0, H - 34, W, 3);
@@ -112,6 +135,7 @@ export function makeRobeTexture(white = false) {
   const band = (cx) => {
     const bw = 34;
     g.fillStyle = gold; g.fillRect(cx - bw / 2, 0, bw, H);
+    m.fillStyle = GM; m.fillRect(cx - bw / 2, 0, bw, H);
     g.fillStyle = goldDark; g.fillRect(cx - bw / 2 + 3, 0, 2, H); g.fillRect(cx + bw / 2 - 5, 0, 2, H);
     g.strokeStyle = goldDark; g.lineWidth = 2.5;
     for (let y = 22; y < H - 40; y += 30) {
@@ -122,8 +146,20 @@ export function makeRobeTexture(white = false) {
   band(0); band(W);
   // pale stitched glyph row at the waist
   g.fillStyle = white ? 'rgba(160,140,100,.5)' : 'rgba(255,214,150,.55)';
-  for (let x = 40; x < W - 40; x += 28) { g.beginPath(); g.arc(x, 150, 3, 0, 7); g.fill(); g.fillRect(x - 7, 162, 14, 2); }
-  const t = tex(c); t.wrapS = THREE.RepeatWrapping; return t;
+  m.fillStyle = GM;
+  for (let x = 40; x < W - 40; x += 28) { g.beginPath(); g.arc(x, 150, 3, 0, 7); g.fill(); g.fillRect(x - 7, 162, 14, 2); m.fillRect(x - 7, 146, 14, 18); }
+  // embroidered glyph medallions between the waist and the hem band
+  g.strokeStyle = white ? 'rgba(170,150,105,.8)' : 'rgba(245,195,105,.85)'; g.lineWidth = 1.7;
+  for (let x = 36; x < W - 20; x += 56) {
+    const y = 206;
+    g.beginPath(); g.arc(x, y, 8, 0, 7); g.stroke();
+    g.beginPath(); g.moveTo(x, y - 14); g.lineTo(x, y - 9); g.moveTo(x, y + 9); g.lineTo(x, y + 14); g.moveTo(x - 14, y); g.lineTo(x - 9, y); g.moveTo(x + 9, y); g.lineTo(x + 14, y); g.stroke();
+    g.fillStyle = g.strokeStyle; g.beginPath(); g.arc(x, y, 2, 0, 7); g.fill();
+    m.fillRect(x - 15, y - 15, 30, 30);
+  }
+  const t = tex(c); t.wrapS = THREE.RepeatWrapping;
+  const mr = tex(mc, false); mr.wrapS = THREE.RepeatWrapping; t.userData.mr = mr;
+  return t;
 }
 
 export function makeStoneBump() {

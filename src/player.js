@@ -1,21 +1,61 @@
 import * as THREE from 'three';
-import { makeRobeTexture, makeScarfMask, makeBlobShadow } from './textures.js';
+import { makeRobeTexture, makeWeaveNormal, makeScarfMask, makeBlobShadow, makeSoftDot } from './textures.js';
 import { terrainHeight, terrainGradient, smooth, clamp, WIND } from './world/heightfield.js';
 
 // ------------------------------------------------------------------ proportions (metres, feet at y = 0)
 const HIP_Y = 0.64, HIP_X = 0.085, THIGH = 0.34, SHIN = 0.34;
 const HEM_Y = 0.30, SHOULDER_Y = 1.12, HEAD_Y = 1.34;
 
+let _weave;
+/** Woven-cloth physical material: velvet sheen, weave normals, glossy gold thread (roughness/metal map), sun translucency, optional hem dust. */
+function fabricMaterial(params, tex, { dust = false, trans = 1, sheenColor = 0xffa070 } = {}) {
+  const nm = _weave || (_weave = makeWeaveNormal()), mr = tex.userData.mr;
+  nm.repeat.set(10, 5);
+  const mat = new THREE.MeshPhysicalMaterial({
+    ...params, map: tex, emissiveMap: tex, roughnessMap: mr, metalnessMap: mr, roughness: 1, metalness: 1, normalMap: nm, normalScale: new THREE.Vector2(0.55, 0.55),
+    sheen: 1, sheenRoughness: 0.42, sheenColor: new THREE.Color(sheenColor),
+  });
+  const dustCode = dust ? `{
+  float dn = vn(vMapUv * vec2(60., 24.)) * 0.6 + vn(vMapUv * vec2(210., 90.)) * 0.4;
+  dustK = smoothstep(0.50 + dn * 0.12, 0.30, vLY) * (0.45 + 0.55 * dn);
+  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.78, 0.6, 0.38) * (0.8 + 0.4 * dn), dustK * 0.45);
+}` : '';
+  mat.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader.replace('void main() {', 'varying float vLY;\nvoid main() {').replace('#include <begin_vertex>', '#include <begin_vertex>\nvLY = position.y;');
+    shader.fragmentShader = shader.fragmentShader.replace('void main() {', `varying float vLY;
+float h21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5); }
+float vn(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3. - 2. * f); return mix(mix(h21(i), h21(i + vec2(1, 0)), f.x), mix(h21(i + vec2(0, 1)), h21(i + vec2(1, 1)), f.x), f.y); }
+void main() {`)
+      .replace('#include <map_fragment>', `#include <map_fragment>
+float dustK = 0.;
+${dustCode}`)
+      .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = mix(roughnessFactor, 0.92, dustK);')
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance *= 1. - dustK * 0.75;')
+      .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
+#if NUM_DIR_LIGHTS > 0
+{
+  // thin cloth lit from behind: warm light bleeding through, strongest at grazing angles
+  vec3 Lv = directionalLights[0].direction, Vv = normalize(vViewPosition);
+  float back = pow(clamp(-dot(Vv, Lv), 0., 1.), 2.5) * (0.35 + 0.65 * (1. - abs(dot(Vv, normal))));
+  reflectedLight.directDiffuse += directionalLights[0].color * diffuseColor.rgb * vec3(1.15, 0.5, 0.28) * back * ${(0.55 * trans).toFixed(2)} * (1. - dustK * 0.5);
+}
+#endif`);
+  };
+  return mat;
+}
+
 /** Hooks the robe material so its lower half sways, flares and is kicked by the legs. */
-function robeSwayMaterial(params) {
-  const mat = new THREE.MeshStandardMaterial(params);
+function robeSwayMaterial(params, tex, sheenColor) {
+  const mat = fabricMaterial(params, tex, { dust: true, sheenColor });
   const u = {
     uSway: { value: new THREE.Vector3() }, uTime: { value: 0 }, uFlutter: { value: 0 },
     uStride: { value: 0 }, uStrideAmt: { value: 0 }, uFlare: { value: 0 },
     uSpread: { value: 0 }, uTuck: { value: 0 },
   };
   mat.userData.sway = u;
-  mat.onBeforeCompile = (shader) => {
+  const fab = mat.onBeforeCompile;
+  mat.onBeforeCompile = (shader, r) => {
+    fab(shader, r);
     Object.assign(shader.uniforms, u);
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>
@@ -92,9 +132,23 @@ export function buildTraveler({ white = false } = {}) {
   root.add(body);
   const robeTex = makeRobeTexture(white);
   const emissive = white ? 0.42 : 0.2;
-  const robeMat = robeSwayMaterial({ map: robeTex, roughness: 0.85, metalness: 0, side: THREE.DoubleSide, emissive: 0xffffff, emissiveMap: robeTex, emissiveIntensity: emissive });
+  const sheen = white ? 0xfff0d8 : 0xffa070;
+  const robeMat = robeSwayMaterial({ side: THREE.DoubleSide, emissive: 0xffffff, emissiveIntensity: emissive }, robeTex, sheen);
   const hoodCol = new THREE.Color(white ? 0xf4eee4 : 0xa82a15);
-  const hoodMat = new THREE.MeshStandardMaterial({ color: hoodCol, roughness: 0.85, metalness: 0, emissive: hoodCol, emissiveIntensity: emissive });
+  const hoodMaker = (shade) => {
+    const m = new THREE.MeshPhysicalMaterial({ color: hoodCol, roughness: 0.8, metalness: 0, emissive: hoodCol, emissiveIntensity: emissive, sheen: 1, sheenRoughness: 0.4, sheenColor: new THREE.Color(sheen) });
+    if (shade) m.onBeforeCompile = (sh) => {
+      // the hood's opening: cloth falls into deep shadow toward the face
+      sh.vertexShader = sh.vertexShader.replace('void main() {', 'varying vec3 vLP;\nvoid main() {').replace('#include <begin_vertex>', '#include <begin_vertex>\nvLP = position;');
+      sh.fragmentShader = sh.fragmentShader.replace('void main() {', 'varying vec3 vLP;\nvoid main() {')
+        .replace('#include <map_fragment>', `#include <map_fragment>
+float hoodAO; { float fr = smoothstep(0.02, 0.17, vLP.z); float d = length((vLP.xy - vec2(0., -0.012)) * vec2(1.3, 0.92)); hoodAO = mix(1., smoothstep(0.09, 0.27, d), fr); hoodAO = mix(0.12, 1., hoodAO); }
+diffuseColor.rgb *= hoodAO;`)
+        .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance *= hoodAO * hoodAO;');
+    };
+    return m;
+  };
+  const hoodMat = hoodMaker(true), tipMat = hoodMaker(false);
 
   // robe: narrow at the shoulders, falling into a wide, soft hem just below the knees
   const profile = new THREE.SplineCurve([
@@ -110,12 +164,12 @@ export function buildTraveler({ white = false } = {}) {
   const skull = new THREE.Group(); skull.scale.set(0.93, 1.13, 1.0); head.add(skull);
   skull.add(new THREE.Mesh(new THREE.SphereGeometry(0.19, 32, 20), hoodMat));
   // an oval of shadow inside the hood
-  const faceMat = new THREE.MeshLambertMaterial({ color: white ? 0x1a1310 : 0x0c0504 });
+  const faceMat = new THREE.MeshLambertMaterial({ color: white ? 0x120d0a : 0x050202 });
   const face = new THREE.Mesh(new THREE.SphereGeometry(0.15, 28, 18), faceMat);
   face.scale.set(0.8, 0.9, 0.42); face.position.set(0, -0.012, 0.13);
   skull.add(face);
   const eyeMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(3.4, 2.9, 2.0) });
-  const eyes = [];
+  const eyes = [], haloMat = new THREE.SpriteMaterial({ map: makeSoftDot(), color: new THREE.Color(1.4, 1.0, 0.5), transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false, fog: false });
   for (const sx of [-1, 1]) {
     const eye = new THREE.Mesh(new THREE.CircleGeometry(0.015, 12), eyeMat);
     // sit on the face's oval surface, angled slightly outward
@@ -124,21 +178,22 @@ export function buildTraveler({ white = false } = {}) {
     eye.position.set(ex, ey, ez);
     eye.rotation.y = sx * 0.45;
     eye.scale.set(0.85, 1.55, 1);
+    const halo = new THREE.Sprite(haloMat); halo.scale.set(0.12, 0.075, 1); eye.add(halo);   // soft bloom halo
     skull.add(eye); eyes.push(eye);
   }
   const tipPivot = new THREE.Group(); tipPivot.position.set(0, 0.15, -0.02); head.add(tipPivot);
-  const tip = new THREE.Mesh(bentCone(0.13, 0.42, 0.16), hoodMat);
+  const tip = new THREE.Mesh(bentCone(0.13, 0.42, 0.16), tipMat);
   tip.rotation.x = -0.12;
   tipPivot.add(tip);
 
   // neck wrap where the scarf begins
-  const wrapMat = new THREE.MeshStandardMaterial({ color: white ? 0xf2ead8 : 0x8a160a, roughness: 0.8, emissive: white ? 0x50483c : 0x2a0402, emissiveIntensity: 0.8 });
+  const wrapMat = new THREE.MeshPhysicalMaterial({ sheen: 0.5, sheenRoughness: 0.5, sheenColor: new THREE.Color(sheen), color: white ? 0xf2ead8 : 0x8a160a, roughness: 0.8, emissive: white ? 0x50483c : 0x2a0402, emissiveIntensity: 0.8 });
   const wrap = new THREE.Mesh(new THREE.TorusGeometry(0.135, 0.05, 10, 28), wrapMat);
   wrap.rotation.x = Math.PI / 2 + 0.12; wrap.position.set(0, 1.17, -0.01); wrap.scale.set(1, 1.05, 0.8);
   body.add(wrap);
 
   // sleeve "wings": cloth panels from shoulder to wrist to hem, folded away (scale 0) until the traveler glides
-  const wingMat = new THREE.MeshStandardMaterial({ map: robeTex, roughness: 0.85, metalness: 0, side: THREE.DoubleSide, emissive: 0xffffff, emissiveMap: robeTex, emissiveIntensity: emissive });
+  const wingMat = fabricMaterial({ side: THREE.DoubleSide, emissive: 0xffffff, emissiveIntensity: emissive }, robeTex, { trans: 1.6, sheenColor: sheen });
   const wings = [1, -1].map((sx) => {
     const pivot = new THREE.Group();
     pivot.position.set(sx * 0.16, 1.07, -0.03);
@@ -217,26 +272,46 @@ uniform sampler2D uMask;
 uniform float uCharge, uN, uTime, uFlash, uFogD;
 uniform vec3 uSunDir, uSunColor, uAmb, uFog, uBase;
 varying vec2 vUv; varying float vIdx; varying vec3 vN; varying vec3 vW;
+float h21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5); }
 void main() {
+  // frayed end: the last stretch unravels into loose threads of different lengths
+  float tipT = clamp((vIdx - (uN - 3.2)) / 2.2, 0., 1.);
+  if (tipT > 0.) {
+    float c = floor(vUv.x * 28.), keep = 0.25 + 0.75 * h21(vec2(c, 7.));
+    float broken = step(0.82, h21(vec2(c, floor(vUv.y * 18.))));
+    if (tipT > keep * (1. - 0.25 * broken) || (tipT > 0.55 && h21(vec2(c, floor(vUv.y * 90.))) < tipT * 0.5)) discard;
+  }
   vec3 N = normalize(vN); if (!gl_FrontFacing) N = -N;
-  float m = texture2D(uMask, vUv).r;
+  vec3 V = normalize(cameraPosition - vW);
+  float dist = length(cameraPosition - vW), wf = 1. - smoothstep(3., 12., dist);
+  float m = texture2D(uMask, vUv).r, halo = texture2D(uMask, vUv, 3.).r;
   float charged = uCharge * uN;
   float lit = 1. - smoothstep(charged - 1.2, charged, vIdx);
   float edge = abs(vUv.x * 2. - 1.);
+  // plain weave: warp threads run along the scarf, weft across
+  float warp = sin(vUv.x * 188.), weft = sin(vUv.y * 360.);
+  float weave = warp * weft, grain = 0.5 + 0.5 * weft;
   vec3 base = uBase;
-  base *= 0.9 + 0.18 * sin(vUv.y * 90. + vUv.x * 7.);
+  base *= 0.88 + 0.1 * sin(vUv.y * 90. + vUv.x * 7.) + (0.1 * weave + 0.05 * warp) * wf;
   base = mix(base, vec3(0.95, 0.62, 0.24), smoothstep(0.84, 0.93, edge));
   vec3 L = normalize(uSunDir);
-  float diff = max(dot(N, L), 0.) * 0.6 + pow(max(dot(-N, L), 0.), 2.) * 0.55;   // thin cloth glows when back-lit
+  float ndl = dot(N, L);
+  float diff = max(ndl, 0.) * 0.6 + pow(max(-ndl, 0.), 2.) * 0.55;   // thin cloth glows when back-lit
   vec3 col = base * (uAmb * 0.45 + uSunColor * (0.25 + diff));
+  // translucency: sun bleeding through the cloth toward the viewer
+  col += base * vec3(1.2, 0.5, 0.25) * uSunColor * pow(clamp(-dot(V, L), 0., 1.), 3.) * (0.5 + 0.5 * (1. - abs(dot(V, N)))) * 0.6;
+  // velvet sheen at grazing angles + a satin streak from the warp threads
+  float fres = pow(1. - abs(dot(V, N)), 2.5);
+  col += vec3(1.0, 0.55, 0.3) * (uSunColor * 0.8 + uAmb * 0.4) * fres * 0.55 * (0.8 + 0.2 * warp);
   float shimmer = 0.85 + 0.15 * sin(uTime * 3. + vIdx * 0.7);
   vec3 glyphLit = vec3(3.2, 2.5, 1.5) * shimmer;
   vec3 glyphDim = vec3(0.5, 0.2, 0.09);
-  col += m * mix(glyphDim, glyphLit, lit);
+  // glyphs are glowing gold thread: slightly beaded along the weave, with a soft halo bleeding into the cloth
+  float thread = m * (0.78 + 0.22 * (0.5 + 0.5 * weft));
+  col += thread * mix(glyphDim, glyphLit, lit) + halo * 0.35 * mix(glyphDim * 0.4, glyphLit * 0.4, lit);
   // a faint warm sheen over the whole charged length
   col += base * lit * 0.25 * shimmer;
   col += uFlash * vec3(1.5, 1.0, 0.6) * (0.5 + 0.5 * m);
-  float dist = length(cameraPosition - vW);
   col = mix(col, uFog, 1. - exp(-pow(dist * uFogD, 2.)));
   gl_FragColor = vec4(col, 1.);
 }`;
@@ -385,7 +460,7 @@ export class Scarf {
       const nx = nn.x * c - s.x * sn, ny = nn.y * c - s.y * sn, nz = nn.z * c - s.z * sn;
       let w = 0.16 * (1 - 0.2 * f);
       if (i === 0) w *= 0.7;
-      if (i >= n - 2) w *= i === n - 1 ? 0.15 : 0.65;
+      if (i >= n - 2) w *= i === n - 1 ? 0.9 : 0.97;
       const o = i * 6, p = P[i];
       pos[o] = p.x - sx * w; pos[o + 1] = p.y - sy * w; pos[o + 2] = p.z - sz * w;
       pos[o + 3] = p.x + sx * w; pos[o + 4] = p.y + sy * w; pos[o + 5] = p.z + sz * w;
