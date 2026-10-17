@@ -24,6 +24,7 @@ import { makeGodRaysPass, makeGradePass } from './post.js';
 import { Group } from './group.js';
 import { Updrafts } from './world/updrafts.js';
 import { flightFx } from './flightfx.js';
+import { Interiors } from './interiors/index.js';
 
 window.addEventListener('error', (e) => { $('err').textContent += (e.message || e) + '\n'; });
 function $(id) { return document.getElementById(id); }
@@ -47,6 +48,7 @@ scene.add(sunLight, sunLight.target, hemi);
 
 // ------------------------------------------------------------------ world (ruins first: they flatten plazas the terrain must know about)
 const ruins = new Ruins(scene);
+const interiors = new Interiors(scene, ruins);   // enterable buildings: placed before the terrain (they flatten their pads)
 const sandU = makeSandUniforms();
 const nearMat = makeSandMaterial(sandU);
 const farMat = makeSandMaterial(sandU, 0.7);
@@ -79,7 +81,7 @@ function updatePost(time) {
   rays.uniforms.uAspect.value = camera.aspect;
   grade.uniforms.uTime.value = time;
   grade.uniforms.uSat.value = 1.1 + 0.08 * (1 - pal.snow);
-  grade.uniforms.uFade.value = game.whiteout * 0.35;
+  grade.uniforms.uFade.value = Math.max(game.whiteout * 0.35, interiors.fade);
 }
 
 const sparkles = new ParticlePool(scene, 1400, true);
@@ -172,6 +174,7 @@ terrain.prime(sx, sz, 3);
 for (let i = 0; i < +(q.get('glyphs') ?? 0); i++) player.addGlyph();
 
 const game = { state: 'title', time: 0, visionT: 0, visionIdx: 0, hints: {}, singHold: 0, chapter: -1, gust: 0, gustT: 14, gustDir: new THREE.Vector3(), whiteout: 0 };
+interiors.attach({ renderer, composer, camera, cam, player, group, fx, audio, grade, rays, bloom, env, flyers, game, query: q, showHint: (...a) => showHint(...a) });
 
 // ------------------------------------------------------------------ settings (persisted per browser)
 const settings = { sens: 1, invertY: false, volume: 0.85, calm: false };
@@ -182,7 +185,7 @@ function applySettings() {
 }
 applySettings();
 window.__THREE = THREE;
-window.__game = { seed: SEED, sites: SITES, plan: PLAN, hf: { terrainHeight, terrainGradient, pathX }, companion: group.members[0], group, updrafts, player, cam, env, scene, camera, game, terrain, renderer, input, props, guardians, flyers, audio, ruins, summitPoint };
+window.__game = { seed: SEED, sites: SITES, plan: PLAN, interiors, hf: { terrainHeight, terrainGradient, pathX }, companion: group.members[0], group, updrafts, player, cam, env, scene, camera, game, terrain, renderer, input, props, guardians, flyers, audio, ruins, summitPoint };
 
 const SAND = new THREE.Color();
 const tmp = new THREE.Vector3();
@@ -221,7 +224,7 @@ function updateChapter(prog) {
     el.innerHTML = `<span>${c.n}</span>${c.name}`;
     el.classList.remove('show'); void el.offsetWidth; el.classList.add('show');
     audio.chapter();
-    if (idx > 0) saveProgress({ chapter: idx, glyphs: player.glyphs, met: group.metCount() > 0, group: group.save() });
+    if (idx > 0) saveProgress({ chapter: idx, glyphs: player.glyphs, met: group.metCount() > 0, group: group.save(), rooms: interiors.save() });
   }
 }
 
@@ -604,10 +607,11 @@ function autoPilot(inp, dt) {
   const pp = player.pos, A = autoS;
   const w = group.members.find((c) => (c.state === 'waiting' || c.state === 'resting') && c.visible && c.dist < 90);
   let tx, tz;
-  if (w) { tx = w.pos.x; tz = w.pos.z; } else { tz = pp.z - 25; tx = pathX(tz); }
+  const door = interiors.autoTarget(pp);   // ?auto&rooms: detour through the doorways
+  if (door) { tx = door.x; tz = door.z; } else if (w) { tx = w.pos.x; tz = w.pos.z; } else { tz = pp.z - 25; tx = pathX(tz); }
   // wait for stragglers so the group stays together
   const lag = group.travellers.some((c) => c.dist > 20 && c.dist < 70);
-  let amt = (lag && !w) ? 0 : 1;
+  let amt = (lag && !w && !door) ? 0 : 1;
   if (w && w.dist < 4) amt = 0;
   const wx = tx - pp.x, wz = tz - pp.z, wl = Math.hypot(wx, wz) || 1;
   const yaw = cam.yaw, fx = -Math.sin(yaw), fz = -Math.cos(yaw), rx = Math.cos(yaw), rz = -Math.sin(yaw);
@@ -631,11 +635,12 @@ function frame(nowMs, doRender = true) {
   dt = Math.min(dt, 0.05);
   frame.last = nowMs;
   const inp = input.poll();
-  if (q.has('auto') && (game.state === 'playing' || game.state === 'vision')) autoPilot(inp, Math.min(dt, 0.05));
+  if (q.has('auto') && (game.state === 'playing' || game.state === 'vision') && !interiors.inside) autoPilot(inp, Math.min(dt, 0.05));
   if (inp.pausePressed && (game.state === 'playing' || game.state === 'paused')) togglePause();
   if (game.state === 'paused') { if (doRender) composer.render(); return; }
   game.time += dt;
   const time = game.time;
+  if (interiors.step(dt, time, inp, doRender)) return;   // inside a building: the room runs the frame
 
   const prog = progressAt(player.pos.z);
   applyPalette(prog);
@@ -686,6 +691,7 @@ function frame(nowMs, doRender = true) {
     const b0 = introBanner;
     if (b0 && !b0.awakened && Math.hypot(b0.center.x - player.pos.x, b0.center.z - player.pos.z) < 55) showHint('sing', input.isTouch ? 'Hold <b>SING</b> — the grey cloth will answer.' : 'Hold <b>E</b> or <b>right-click</b> to sing — the grey cloth will answer.', 9000);
     if (player.pos.z < 10 - PATH_LEN && game.state === 'playing') startEnding();
+    interiors.updateOutside(dt, time);
     const upd = updrafts.nearest(player.pos);
     if (upd && upd.dist < 45 && game.hints.controls) showHint('updraft', 'A column of wind. Glide or walk into it and let it carry you up.', 7000);
     if (!player.grounded && player.charge < 0.02 && game.hints.controls) showHint('glide', input.isTouch ? 'Tap <b>GLIDE</b> to spread your robe · hold <b>DIVE</b> to plunge, release near the ground to swoop.' : 'Press <b>C</b> to glide · hold <b>shift</b> to dive, release near the ground to swoop.', 8000);
@@ -705,6 +711,7 @@ function frame(nowMs, doRender = true) {
   } else if (game.state === 'ending' || game.state === 'end') {
     if (game.state === 'ending') updateEnding(dt, time);
     else { cam.update(dt, player, { lookX: 0, lookY: 0 }, time, { dist: 13, follow: 3 }); player.update(dt, { mx: 0, my: 0, jump: false, jumpPressed: false, sing: false }, cam.yaw, time, env); if (inp.anyKey && time - game.endAt > 3) location.reload(); }
+    interiors.updateOutside(dt, time);   // the cloth creature flies on with you
     flyers.update(dt, time, player, fx, evs);
     for (const g of guardians) g.update(dt, time, player, fx, evs);
     audio.update(dt, { progress: 1, snow: 1, speed: 0, surfing: false, flying: false, singing: false, sing: 0, guardian: 0, intensity: 1 });
@@ -766,6 +773,9 @@ window.__adapt = adaptResolution;
 function loop(t) { adaptResolution(t); frame(t); requestAnimationFrame(loop); }
 requestAnimationFrame(loop);
 // deterministic stepping (used for automated checks when the page is not being animated by the browser)
+// debug: walk straight into a building (door index, or an interior kind: sandhall garden tower stardome memory)
+window.__enter = (which = 0) => interiors.enter(which, { instant: true });
+window.__exit = () => { if (interiors.state === 'inside') interiors._beginLeave(); };
 window.__advance = (sec, step = 1 / 30) => {
   const n = Math.max(1, Math.round(sec / step));
   let t = frame.last ?? performance.now();
@@ -857,6 +867,7 @@ if (saved && CHAPTERS[saved.chapter]) {
     // shrines already passed have been seen; travelers met before walk with you again
     for (const sh of ruins.shrines) if (sh.z > z) sh.seen = true;
     group.restore(saved.group, player);
+    interiors.restore(saved.rooms);
     cam.yaw = 0; cam.ready = false;
     game.chapter = saved.chapter - 1;
     begin();

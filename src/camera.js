@@ -127,6 +127,8 @@ export class ChaseCamera {
     this.pos.y += (want.y - this.pos.y) * exp(6 + 8 * dive, dt);
     const minY = terrainHeight(this.pos.x, this.pos.z) + 1.0;
     if (this.pos.y < minY) this.pos.y = minY;
+    // enclosed spaces (interiors) keep the camera inside their walls and under their roof
+    if (extra.clamp) extra.clamp(this.pos, this.target);
 
     this.shake = Math.max(0, this.shake - dt * 1.6);
     const cam = this.camera;

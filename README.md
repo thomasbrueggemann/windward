@@ -72,6 +72,13 @@ with dive speed, a whistling column.
 - Cloth mechanics: dormant grey banners turn red when sung to, floating cloth recharges the scarf, curious cloth
   creatures swoop around you, stone-and-bronze guardians hunt you unless you shelter under stone.
 - Shrines show procedural cave-painting visions; a collapse / revival / flight-to-the-summit ending.
+- **Buildings you can enter** (`src/interiors/`): one glowing doorway per chapter (a desert ruin, a temple in the
+  sunken city, a cave mouth in the depths, a stone hut on the ascent), each opening onto a seeded mini world with
+  its own light, fog, grade and room tone: the *Hall of Falling Sand* (sunlit hall, sand pouring through cracks,
+  a symbol in the light), the *Sleeping Garden* (cloth flowers that bloom when sung to; wake them all and a cloth
+  creature follows you), the *Tower of Wind* (ride a wind column past cloth ledges to a vision at the top), the
+  *Pocket of Stars* (lift drifting lights into a constellation that gives you a symbol) and the *Chamber of
+  Memory* (murals that tell the story, ending on one no shrine shows). Companions walking with you come along.
 - Fully synthesised score (`src/audio.js`): drifting pad per chapter, cello-like melody, singing voice, wind,
   sand hiss, bells.
 
@@ -81,6 +88,9 @@ with dive speed, a whistling column.
 `?mute` no audio · `?seed=123` build world 123 (otherwise every new journey gets a random world; the seed is saved
 with progress and shown in the pause menu). `window.__game` exposes internals; `window.__advance(seconds)` steps the simulation;
 `window.__view({ p, yaw, pitch, dist })` teleports along the path and frames the traveler.
+`?room=garden` (or a door index, `?room=2`) walks straight into a building; `window.__enter('tower')` / `__enter(1)` and
+`window.__exit()` do the same at any time, `__game.interiors.info()` lists the doors; `?auto&rooms` makes the
+autopilot detour through every doorway.
 
 ## Credits
 

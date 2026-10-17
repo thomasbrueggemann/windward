@@ -474,6 +474,7 @@ export class Player {
     this._lastGy = 0; this._groundVy = 0;
     this.colliders = [];
     this.shelters = [];
+    this.ledges = false;     // ground has drops (interior platforms): stepping off falls instead of snapping down
     this.events = [];
     // flight modes
     this.mode = 'ground';    // ground | fall | flutter | glide | dive | soar
@@ -717,7 +718,10 @@ export class Player {
       if (this.grounded) {
         // leave the ground over crests when moving fast: the ground falls away faster than gravity could pull
         const groundVy = (gy - prevY) / dt;
-        if (this.speed > 9 && groundVy < this._groundVy - GRAVITY * dt * 1.6 && groundVy < -2) {
+        // interiors with ledges (cloth platforms): walking off an edge is a fall, not a snap down to the floor below
+        if (this.ledges && gy < prevY - 0.9) {
+          this.grounded = false; v.y = Math.min(0, this._groundVy); this.airT = 0;
+        } else if (this.speed > 9 && groundVy < this._groundVy - GRAVITY * dt * 1.6 && groundVy < -2) {
           this.grounded = false; v.y = this._groundVy * 0.85; p.y = prevY + v.y * dt;
           this.airT = COYOTE;
         } else { p.y = gy; v.y = 0; this._groundVy = groundVy; }

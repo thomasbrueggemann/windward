@@ -9,6 +9,12 @@ const MOODS = [
   { root: 31, chord: [0, 7, 12, 15], cut: 600 },    // depths: dark minor, G
   { root: 38, chord: [0, 7, 14, 19], cut: 800 },    // snow: suspended, D
   { root: 38, chord: [0, 12, 19, 24], cut: 2400 },  // summit: radiant
+  // interiors (src/interiors): picked with update({ mood })
+  { root: 36, chord: [0, 7, 12, 16], cut: 1500 },   // 5 sunlit hall: warm, C
+  { root: 33, chord: [0, 7, 15, 19], cut: 520 },    // 6 sleeping garden: hushed minor, A
+  { root: 38, chord: [0, 7, 14, 21], cut: 1100 },   // 7 tower of wind: open suspended, D
+  { root: 40, chord: [0, 7, 11, 19], cut: 1800 },   // 8 pocket of stars: glassy maj7, E
+  { root: 31, chord: [0, 7, 12, 15], cut: 700 },    // 9 chamber of memory: solemn, G
 ];
 // scale degrees of D dorian (relative to D)
 const DORIAN = [0, 2, 3, 5, 7, 9, 10, 12, 14];
@@ -157,11 +163,12 @@ export class AudioEngine {
     const ctx = this.ctx, t = ctx.currentTime;
     // chapter mood from progress
     const p = s.progress;
-    const mood = p < 0.30 ? 0 : p < 0.50 ? 1 : p < 0.75 ? 2 : p < 0.985 ? 3 : 4;
+    const mood = s.mood ?? (p < 0.30 ? 0 : p < 0.50 ? 1 : p < 0.75 ? 2 : p < 0.985 ? 3 : 4);
+    const indoor = s.indoor || 0;   // walls keep the wind out
     if (mood !== this.mood || !this._moodSet) { this._setMood(mood); this._moodSet = true; }
     this.intensity += (s.intensity - this.intensity) * (1 - Math.exp(-0.5 * dt));
     this.stringGain.gain.setTargetAtTime(0.0 + this.intensity * 0.22 + (mood === 4 ? 0.15 : 0), t, 1.5);
-    this.windGain.gain.setTargetAtTime(0.05 + s.snow * 0.5 + Math.min(0.2, s.speed * 0.01), t, 0.6);
+    this.windGain.gain.setTargetAtTime((0.05 + s.snow * 0.5 + Math.min(0.2, s.speed * 0.01)) * (1 - 0.85 * indoor), t, 0.6);
     this.windFilter.frequency.setTargetAtTime(380 + s.snow * 500, t, 1);
     this.sandGain.gain.setTargetAtTime(s.surfing ? Math.min(0.28, s.speed * 0.012) : 0, t, 0.15);
     this.sandFilter.frequency.setTargetAtTime(1400 + s.speed * 60, t, 0.2);

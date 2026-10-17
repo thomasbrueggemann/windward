@@ -90,14 +90,40 @@ const MURALS = [
     () => figure(g, W * 0.46, H * 0.9, 1.6),
     () => { g.save(); g.strokeStyle = GOLD; g.lineWidth = 4; g.setLineDash([2, 12]); g.beginPath(); g.moveTo(W * 0.5, H * 0.82); g.bezierCurveTo(W * 0.56, H * 0.6, W * 0.7, H * 0.5, W * 0.62, H * 0.3); g.stroke(); g.restore(); },
   ],
+  // 5 (secret, found indoors): the white-robed ones who came before, a circle of light that returns every traveler
+  (g, W, H, r) => [
+    () => { g.save(); g.strokeStyle = GOLD; g.lineWidth = 3; for (let i = 0; i < 3; i++) { g.beginPath(); g.arc(W / 2, H * 0.44, H * (0.18 + i * 0.07), 0, 7); g.globalAlpha = 0.75 - i * 0.2; g.stroke(); } g.restore(); },
+    () => mountain(g, W * 0.5, H * 0.5, W * 0.2, H * 0.2),
+    ...spread(r, 6, 0, 1).map((u) => () => { const a = u * Math.PI * 2 - Math.PI / 2; figure(g, W / 2 + Math.cos(a) * W * 0.3, H * 0.52 + Math.sin(a) * H * 0.3, 1.15, false, '#f3ead8'); }),
+    () => figure(g, W * 0.5, H * 0.9, 1.3),
+    () => { g.save(); g.strokeStyle = GOLD; g.lineWidth = 3; g.setLineDash([3, 10]); g.beginPath(); g.moveTo(W * 0.5, H * 0.8); g.lineTo(W * 0.5, H * 0.58); g.stroke(); g.restore(); },
+    () => sun(g, W * 0.5, H * 0.12, H * 0.04, 12 + ((r() * 3) | 0) * 4),
+  ],
+  // 6 (secret): the first travelers rode the wind up the towers, and cloth flew with them
+  (g, W, H, r) => [
+    () => sun(g, W * (0.7 + r() * 0.15), H * 0.16, H * 0.05, 16),
+    ...spread(r, 2 + ((r() * 2) | 0), 0.12, 0.88).map((u) => () => tower(g, W * u, H * 0.84, 60, 260 + r() * 60)),
+    () => ground(g, W, H * 0.86),
+    () => { g.save(); g.strokeStyle = INK; g.lineWidth = 2.5; g.setLineDash([10, 9]); for (let i = 0; i < 3; i++) { g.beginPath(); for (let k = 0; k <= 30; k++) { const t = k / 30, x = W * (0.3 + i * 0.2) + Math.sin(t * 14 + i) * 26, y = H * (0.86 - t * 0.7); k ? g.lineTo(x, y) : g.moveTo(x, y); } g.stroke(); } g.restore(); },
+    ...spread(r, 3, 0.22, 0.78).map((u, i) => () => { g.save(); g.translate(W * u, H * (0.32 + (i % 2) * 0.14)); g.rotate(-0.5 + i * 0.4); figure(g, 0, 0, 1.2); g.restore(); }),
+    () => cloth(g, W * 0.1, H * 0.24, W * 0.35, 20),
+    () => cloth(g, W * 0.55, H * 0.4, W * 0.35, -16),
+  ],
 ];
 
-export function drawMural(canvas, index, t) {
+/** Number of mural compositions (shrines use the first ones; interiors hold the rest). */
+export const MURAL_COUNT = MURALS.length;
+
+/**
+ * Draw vision `index` revealed to `t` (0..1). `size` = {w, h} draws into an offscreen canvas at that pixel size
+ * (e.g. a mural texture on an interior wall) instead of matching the on-screen canvas.
+ */
+export function drawMural(canvas, index, t, size = null) {
   const dpr = Math.min(2, window.devicePixelRatio || 1);
-  const W = canvas.clientWidth * dpr, H = canvas.clientHeight * dpr;
+  const W = size ? size.w : canvas.clientWidth * dpr, H = size ? size.h : canvas.clientHeight * dpr;
   if (canvas.width !== W || canvas.height !== H) { canvas.width = W; canvas.height = H; }
   const g = canvas.getContext('2d');
-  g.clearRect(0, 0, W, H);
+  if (!size || !size.keep) g.clearRect(0, 0, W, H);
   const scale = Math.min(W / 1280, H / 720) * 1.15;
   // frame
   g.save();

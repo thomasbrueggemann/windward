@@ -171,7 +171,14 @@ export function addPlaza(x, z, r0, r1) {
   return pl;
 }
 
+// While the traveler is inside a building (src/interiors) its floor replaces the dunes for everything that asks
+// for the ground (controller, scarf, camera, particles). null = the open world.
+let groundOverride = null;
+/** Replace the ground with `fn(x, z)` (an interior's floor), or restore the terrain with null. */
+export function setGroundOverride(fn) { groundOverride = fn; }
+
 export function terrainHeight(x, z) {
+  if (groundOverride) return groundOverride(x, z);
   let h = rawHeight(x, z, false);
   for (let i = 0; i < PLAZAS.length; i++) {
     const pl = PLAZAS[i];
