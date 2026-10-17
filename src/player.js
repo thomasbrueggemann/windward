@@ -574,7 +574,11 @@ export class Player {
     }
 
     // singing
-    this.singing = !!inp.sing && !this.frozen;
+    // a tap still sings a short note
+    if (inp.sing && !this._singHeld) this.singMin = 0.32;
+    this._singHeld = !!inp.sing;
+    this.singMin = Math.max(0, (this.singMin || 0) - dt);
+    this.singing = (!!inp.sing || this.singMin > 0) && !this.frozen;
     this.sing += ((this.singing ? 1 : 0) - this.sing) * exp(this.singing ? 5 : 3, dt);
 
     this._animate(dt, time, env, wishAmt);

@@ -21,7 +21,6 @@ export class ChaseCamera {
     this.ahead = new THREE.Vector3();
     this.focusY = 0;
     this.lift = 0;              // extra pitch pushed in by terrain occlusion
-    this.yawVel = 0; this.pitchVel = 0;
     this.ready = false;
     this._want = new THREE.Vector3();
   }
@@ -34,13 +33,9 @@ export class ChaseCamera {
   update(dt, player, look, time, extra = {}) {
     const lx = look.lookX || 0, ly = (look.lookY || 0) * (this.invertY ? -1 : 1);
     if (lx || ly) { this.idle = 0; } else this.idle += dt;
-    // a little inertia on manual orbit so mouse/stick look feels weighty rather than twitchy
-    this.yawVel += (-lx * 0.0034 * this.sens / Math.max(dt, 1e-3) - this.yawVel) * exp(30, dt);
-    this.pitchVel += (ly * 0.0028 * this.sens / Math.max(dt, 1e-3) - this.pitchVel) * exp(30, dt);
-    if (!lx) this.yawVel *= Math.exp(-14 * dt);
-    if (!ly) this.pitchVel *= Math.exp(-14 * dt);
-    this.yaw += this.yawVel * dt;
-    this.pitch = clamp(this.pitch + this.pitchVel * dt, -0.2, 1.2);
+    // manual orbit is applied 1:1 so every pixel of mouse travel counts
+    this.yaw -= lx * 0.0034 * this.sens;
+    this.pitch = clamp(this.pitch + ly * 0.0028 * this.sens, -0.2, 1.2);
 
     const speed = player.speed;
     if (!extra.noFollow && this.idle > 1.0 && speed > 1.2) {

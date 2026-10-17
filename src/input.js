@@ -3,6 +3,7 @@ export class Input {
   constructor(el) {
     this.keys = new Set();
     this.zoom = 0;
+    this.singTap = false;     // a sing press that may already be released by the next poll
     this.pressedEdge = new Set();
     this.dragging = false;
     this.lookX = 0; this.lookY = 0;
@@ -15,7 +16,7 @@ export class Input {
     const k = (e, down) => {
       if (e.repeat) return;
       const c = e.code;
-      if (down) { this.keys.add(c); this.pressedEdge.add(c); } else this.keys.delete(c);
+      if (down) { this.keys.add(c); this.pressedEdge.add(c); if (c === 'KeyE' || c === 'KeyQ' || c === 'KeyF') this.singTap = true; } else this.keys.delete(c);
       if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(c)) e.preventDefault();
     };
     window.addEventListener('keydown', (e) => k(e, true));
@@ -24,7 +25,7 @@ export class Input {
     el.addEventListener('contextmenu', (e) => e.preventDefault());
     el.addEventListener('pointerdown', (e) => {
       if (e.pointerType === 'touch') return;
-      if (e.button === 2) this.mouseSing = true; else this.dragging = true;
+      if (e.button === 2) { this.mouseSing = true; this.singTap = true; } else this.dragging = true;
       // capture the mouse for free look once the journey has begun
       if (this.allowLock && e.button === 0 && !document.pointerLockElement && el.requestPointerLock) {
         try { const r = el.requestPointerLock(); if (r && r.catch) r.catch(() => {}); } catch (err) { /* not allowed here */ }
@@ -47,7 +48,7 @@ export class Input {
       const b = document.createElement('div');
       b.textContent = label;
       b.style.cssText = `position:fixed;bottom:${side === 'fly' ? 110 : 30}px;right:28px;width:76px;height:76px;border-radius:50%;border:1px solid rgba(255,230,190,.6);color:#ffe9c8;display:flex;align-items:center;justify-content:center;font:12px sans-serif;letter-spacing:.2em;background:rgba(255,200,120,.12);z-index:8;touch-action:none;user-select:none`;
-      b.addEventListener('touchstart', (e) => { t[key] = true; e.preventDefault(); }, { passive: false });
+      b.addEventListener('touchstart', (e) => { t[key] = true; if (key === 'sing') this.singTap = true; else this.pressedEdge.add('Space'); e.preventDefault(); }, { passive: false });
       b.addEventListener('touchend', (e) => { t[key] = false; e.preventDefault(); });
       document.body.appendChild(b);
     };
@@ -82,7 +83,8 @@ export class Input {
     let mx = (k.has('KeyD') || k.has('ArrowRight') ? 1 : 0) - (k.has('KeyA') || k.has('ArrowLeft') ? 1 : 0);
     let my = (k.has('KeyW') || k.has('ArrowUp') ? 1 : 0) - (k.has('KeyS') || k.has('ArrowDown') ? 1 : 0);
     let jump = k.has('Space');
-    let sing = k.has('KeyE') || k.has('KeyQ') || k.has('KeyF') || this.mouseSing;
+    let sing = k.has('KeyE') || k.has('KeyQ') || k.has('KeyF') || this.mouseSing || this.singTap;
+    this.singTap = false;
     let lookX = this.lookX, lookY = this.lookY;
     this.lookX = this.lookY = 0;
     mx += this.touch.mx; my += this.touch.my; jump ||= this.touch.jump; sing ||= this.touch.sing;
