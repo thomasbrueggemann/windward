@@ -39,6 +39,19 @@ export const palette = (() => {
   return o;
 })();
 
+// the clear sky above the clouds, blended in during the final flight
+const PARADISE = { top: C('#2a64b0'), hor: C('#ffe2b0'), fog: C('#f6dcc0'), fogD: 0.00032, lit: C('#fff0d6'), hi: C('#ffffff'), shade: C('#93a6d4'),
+  rim: C('#ffffff'), sunC: C('#ffe8c4'), sunI: 3.3, sun: V(0.05, 0.16, -0.99), snow: 1, glit: C('#ffffff'), amb: C('#9fb8e6'), grd: C('#e8d6c4'), cave: 0, dust: 0.25, exp: 0.95, bloom: 0.75, rays: 1.2 };
+
+/** Blend the current palette toward the final flight's clear golden sky. */
+export function blendParadise(k) {
+  if (k <= 0) return palette;
+  for (const f of COLOR_FIELDS) palette[f].lerp(PARADISE[f], k);
+  for (const f of NUM_FIELDS) palette[f] += (PARADISE[f] - palette[f]) * k;
+  palette.sun.lerp(PARADISE.sun, k).normalize();
+  return palette;
+}
+
 export function samplePalette(p) {
   p = clamp(p, 0, 1);
   let i = 0;

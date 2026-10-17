@@ -81,7 +81,7 @@ export class ChaseCamera {
       const clear = terrainHeight(x, z) + 0.8 - y;
       if (clear > 0) need = Math.max(need, Math.atan2(clear, t) + 0.02);
     }
-    need = Math.min(0.9, need);
+    need = extra.noLift ? 0 : Math.min(0.9, need);
     this.lift += (need - this.lift) * exp(need > this.lift ? 5 : 1.0, dt);
 
     const p2 = this.pitch + this.lift, c2 = Math.cos(p2);
@@ -106,6 +106,7 @@ export class ChaseCamera {
     }
     const fx = -Math.sin(this.yaw), fz = -Math.cos(this.yaw);
     this.look.set(this.target.x + fx * 3.0, this.target.y + 0.5 - Math.sin(this.pitch) * 1.2, this.target.z + fz * 3.0);
+    if (extra.lookAt) this.look.lerp(extra.lookAt, extra.lookK ?? 0.5);
     cam.lookAt(this.look);
     // a slight roll into fast carves
     if (player.surfing || player.flying) cam.rotateZ(clamp(-player.turnRate * 0.04, -0.06, 0.06) * Math.min(1, speed / 12));

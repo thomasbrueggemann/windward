@@ -5,7 +5,7 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { makeSandUniforms, makeSandMaterial, Terrain, buildFarTerrain } from './world/terrain.js';
 import { makeSky, makeSummitLight } from './world/sky.js';
-import { samplePalette } from './world/palette.js';
+import { samplePalette, blendParadise } from './world/palette.js';
 import { terrainHeight, terrainGradient, progressAt, zAtProgress, pathX, summitPoint, WIND, clamp, smooth } from './world/heightfield.js';
 import { Ruins } from './world/ruins.js';
 import { Props } from './world/props.js';
@@ -103,7 +103,8 @@ const companion = new Companion(scene, ruins.colliders, ruins.shelters);
 // ------------------------------------------------------------------ palette
 const ROCK_DESERT = new THREE.Color('#5a4a42'), ROCK_CAVE = new THREE.Color('#14243a'), ROCK_SNOW = new THREE.Color('#4a5670');
 function applyPalette(p) {
-  const pal = samplePalette(p);
+  samplePalette(p);
+  const pal = blendParadise(game.paradise || 0);
   env.pal = pal; env.sunDir.copy(pal.sun); env.progress = p;
   const u = sandU;
   u.uSunDir.value.copy(pal.sun);
@@ -116,7 +117,7 @@ function applyPalette(p) {
   farMat.uniforms.uFogD.value = pal.fogD * farMat.userData.fogScale;
   const su = sky.uniforms;
   su.uTop.value.copy(pal.top); su.uHor.value.copy(pal.hor); su.uGround.value.copy(pal.fog);
-  su.uSunDir.value.copy(pal.sun); su.uSunColor.value.copy(pal.sunC); su.uSunI.value = pal.sunI; su.uOvercast.value = smooth(0.8, 1.0, p) * 0.9 + pal.snow * 0.25;
+  su.uSunDir.value.copy(pal.sun); su.uSunColor.value.copy(pal.sunC); su.uSunI.value = pal.sunI; su.uOvercast.value = (smooth(0.8, 1.0, p) * 0.9 + pal.snow * 0.25) * (1 - (game.paradise || 0));
   renderer.toneMappingExposure = pal.exp;
   bloom.strength = pal.bloom;
   scene.fog.color.copy(pal.fog); scene.fog.density = pal.fogD;
@@ -166,7 +167,7 @@ function applySettings() {
 }
 applySettings();
 window.__THREE = THREE;
-window.__game = { companion, player, cam, env, scene, camera, game, terrain, renderer, input, props, guardians, flyers, audio, ruins, summitPoint };
+window.__game = { hf: { terrainHeight, terrainGradient }, companion, player, cam, env, scene, camera, game, terrain, renderer, input, props, guardians, flyers, audio, ruins, summitPoint };
 
 const SAND = new THREE.Color();
 const tmp = new THREE.Vector3();
@@ -228,6 +229,7 @@ function playerFx(dt, time) {
   const p = player.pos;
   for (const e of player.events) {
     const type = typeof e === 'string' ? e : e.type;
+    if (type === 'step' && e.slide) continue;
     if (type === 'step') {
       audio.step();
       for (let i = 0; i < 3; i++) dustPool.emit(e.x + (Math.random() - .5) * .2, terrainHeight(e.x, e.z) + 0.08, e.z + (Math.random() - .5) * .2,
@@ -333,7 +335,7 @@ function shoutFrom(who) {
 // ------------------------------------------------------------------ mountain wind: gusts that push the traveler back down the slope
 function updateGusts(dt, prog) {
   const cold = smooth(0.78, 0.9, prog);
-  if (cold <= 0 || game.state !== 'playing') { game.gust = Math.max(0, game.gust - dt); return 0; }
+  if (cold <= 0 || game.state !== 'playing') { game.gust = Math.max(0, game.gust - dt); player.push.set(0, 0, 0); companion.p.push.set(0, 0, 0); return 0; }
   game.gustT -= dt;
   if (game.gustT <= 0 && game.gust <= 0) {
     game.gust = 3.4;
@@ -347,14 +349,14 @@ function updateGusts(dt, prog) {
     // the wind pours down from the summit
     const dx = -WIND.x, dz = -WIND.z;
     for (const who of [player, companion.p]) {
-      if (!who.group.visible || who.frozen) continue;
-      if (windShelter(who.pos, dx, dz)) continue;
-      who.vel.x += dx * 13 * k * dt; who.vel.z += dz * 13 * k * dt;
-      if (!who.grounded) who.vel.y -= 4 * k * dt;
+      if (!who.group.visible || who.frozen || windShelter(who.pos, dx, dz)) { who.push.set(0, 0, 0); continue; }
+      who.push.set(dx * 8.5 * k, 0, dz * 8.5 * k);
+      if (!who.grounded) who.vel.y -= 5 * k * dt;
     }
     cam.shake = Math.max(cam.shake, 0.4 * k);
     return k;
   }
+  player.push.set(0, 0, 0); companion.p.push.set(0, 0, 0);
   return 0;
 }
 /** Is there stone just upwind (toward the summit) of this point? */
@@ -395,9 +397,8 @@ function startEnding() {
   player.frozen = true; $('hint').style.opacity = 0;
   companion.p.setVisible(false); companion.state = 'gone';
   flashEl.style.transition = 'none'; flashEl.style.background = '#fff'; flashEl.style.opacity = 0;
-  const white = buildTraveler({ white: true });
   for (let i = 0; i < 6; i++) {
-    const m = white.clone(true);
+    const m = buildTraveler({ white: true });
     const a = (i / 6) * Math.PI * 2 + 0.4, R = 5.6;
     const x = player.pos.x + Math.cos(a) * R, z = player.pos.z + Math.sin(a) * R;
     m.position.set(x, terrainHeight(x, z), z);
@@ -446,12 +447,27 @@ function updateEnding(dt, time) {
       ending.from.x + (target.x - ending.from.x) * e + Math.sin(u * 9) * 6 * (1 - u),
       ending.from.y + (target.y - ending.from.y) * Math.pow(e, 0.8) + 4,
       ending.from.z + (target.z - ending.from.z) * e);
+    // stay well clear of the slope so the summit stays in view
+    player.pos.y = Math.max(player.pos.y, terrainHeight(player.pos.x, player.pos.z) + 6 + 26 * Math.sin(Math.min(1, u * 1.15) * Math.PI));
     const vx = (player.pos.x - prev.x) / dt, vy = (player.pos.y - prev.y) / dt, vz = (player.pos.z - prev.z) / dt;
     player.vel.set(vx, vy, vz); player.speed = Math.min(24, Math.hypot(vx, vz) + 6);
     player.heading = Math.atan2(vx, vz);
     ending.collapse = 0;
-    cam.update(dt, player, { lookX: 0, lookY: 0 }, time, { dist: 13, height: 1.8, follow: 3, fov: 60 });
-    const w = smooth(0.45, 0.97, u);
+    // break through the storm into clear, golden air
+    game.paradise = smooth(0.02, 0.3, u);
+    cam.pitch += (-0.02 - cam.pitch) * (1 - Math.exp(-1.5 * dt)); cam.idle = 3;
+    const wantYaw = Math.atan2(-(target.x - player.pos.x), -(target.z - player.pos.z));
+    cam.yaw += Math.atan2(Math.sin(wantYaw - cam.yaw), Math.cos(wantYaw - cam.yaw)) * (1 - Math.exp(-1.2 * dt));
+    ending.look = ending.look || new THREE.Vector3();
+    // ease the gaze from the traveler up to the light in the cleft
+    const toS = tmp.set(target.x, target.y, target.z).sub(player.pos);
+    ending.look.copy(player.pos).addScaledVector(toS.normalize(), 30);
+    cam.update(dt, player, { lookX: 0, lookY: 0 }, time, { dist: 11, height: 1.8, follow: 3, fov: 62, noFollow: true, noLift: true, lookAt: ending.look, lookK: smooth(0.0, 0.25, u) * 0.75 });
+    if (Math.random() < 0.9) {
+      const a = player.scarf.pts[2 + ((Math.random() * (player.scarf.n - 2)) | 0)];
+      sparkles.emit(a.x, a.y, a.z, (Math.random() - .5) * .6, 0.3, (Math.random() - .5) * .6, 1.2, 0.1, 3, 2.4, 1.4, 1, 1, 0, -0.2);
+    }
+    const w = smooth(0.62, 0.98, u);
     flashEl.style.opacity = w;
     audio.fadeOut(10);
     if (u >= 1 && game.state === 'ending') {
@@ -510,6 +526,7 @@ function frame(nowMs, doRender = true) {
     playerFx(dt, time);
     companionEvents(companion.update(dt, time, player, env, camera, frozen));
     singRings(companion.p, dt);
+    if (companion.visible) for (const e of companion.p.events) if (e.type === 'step' && companion.p.grounded) props.addFootprint(e);
     game.whiteout = updateGusts(dt, prog);
     updateChapter(prog);
     evs.push(...props.update(dt, time, player, env, fx));

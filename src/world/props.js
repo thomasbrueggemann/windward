@@ -139,7 +139,7 @@ export class Props {
     this.shaftMats = shaftMats;
 
     // ---------------------------------------------------- footprints
-    const FP = 140;
+    const FP = 260;
     const fgeo = new THREE.PlaneGeometry(0.15, 0.32); fgeo.rotateX(-Math.PI / 2);
     const age = new THREE.InstancedBufferAttribute(new Float32Array(FP).fill(99), 1).setUsage(THREE.DynamicDrawUsage);
     fgeo.setAttribute('iAge', age);
@@ -178,6 +178,7 @@ export class Props {
     f.addScaledVector(up, -f.dot(up)).normalize();
     const rgt = new THREE.Vector3().crossVectors(up, f).normalize();
     const mat = this._m.makeBasis(rgt, up, f).setPosition(x, y, z);
+    if (e.slide) mat.scale(this._v.set(2.6, 1, 2.2));
     const i = this.footNext; this.footNext = (this.footNext + 1) % this.footN;
     this.foot.setMatrixAt(i, mat); this.foot.instanceMatrix.needsUpdate = true;
     this.footAge.array[i] = 0;

@@ -392,6 +392,7 @@ export class Player {
     this.flash = 0;
     this.stunned = 0;
     this.lookTarget = null;  // world point the hood turns toward
+    this.push = new THREE.Vector3();   // external wind (m/s) the traveler is pressed by
     this.phase = 0;          // walk cycle (radians; one footfall per PI)
     this.strideAmt = 0;      // 0..1 how much the legs are walking
     this.squash = 0; this.squashV = 0;
@@ -507,8 +508,11 @@ export class Player {
           const acc = 28 * surfAmt;
           v.x += -gx * il * acc * dt; v.z += -gz * il * acc * dt;
         }
-        const k = this.stunned > 0 ? 3 : (wishAmt > 0.05 ? 7.5 : 10) - 7 * surfAmt;
-        const tx = wx * speedTarget * wishAmt, tz = wz * speedTarget * wishAmt;
+        const hs0 = Math.hypot(v.x, v.z);
+        // sliding sand barely brakes; carrying speed onto flatter ground runs out gradually instead of stopping dead
+        let k = this.stunned > 0 ? 3 : (wishAmt > 0.05 ? 7.5 : 10) * (1 - 0.93 * surfAmt);
+        k *= 1 - 0.75 * smooth(WALK * 1.15, WALK * 2.6, hs0) * (1 - surfAmt);
+        const tx = wx * speedTarget * wishAmt + this.push.x, tz = wz * speedTarget * wishAmt + this.push.z;
         if (surfAmt > 0.3 && wishAmt > 0.05) {
           // carve: rotate momentum toward the stick instead of braking
           const hs = Math.hypot(v.x, v.z);
@@ -529,6 +533,7 @@ export class Player {
         const tAmt = wishAmt > 0.05 ? Math.max(air * wishAmt, Math.min(hs, SURF_MAX) * 0.98) : hs * 0.985;
         const tx = wishAmt > 0.05 ? wx * tAmt : v.x * 0.985, tz = wishAmt > 0.05 ? wz * tAmt : v.z * 0.985;
         v.x += (tx - v.x) * kk; v.z += (tz - v.z) * kk;
+        v.x += this.push.x * 0.8 * dt; v.z += this.push.z * 0.8 * dt;
       }
       const hs = Math.hypot(v.x, v.z);
       if (hs > SURF_MAX) { v.x *= SURF_MAX / hs; v.z *= SURF_MAX / hs; }
@@ -578,8 +583,10 @@ export class Player {
 
     // facing: turn toward the direction of travel; walking turns quicker than sliding
     let dTurn = 0;
-    if (this.speed > 0.5) {
-      const target = Math.atan2(v.x, v.z);
+    // face where we are going under our own power, not where the wind shoves us
+    const ox = v.x - this.push.x, oz = v.z - this.push.z;
+    if (Math.hypot(ox, oz) > 0.5) {
+      const target = Math.atan2(ox, oz);
       dTurn = wrapAngle(target - this.heading);
       const k = this.surfing ? 5 : this.grounded ? 11 : 6;
       const step = dTurn * exp(k, dt);
@@ -598,7 +605,8 @@ export class Player {
     // lean: into acceleration, into turns, back on a slide, forward in flight
     const speedLean = clamp(this.speed / 22, 0, 0.16);
     const targetLean = this.flyK * (this.flying ? 0.5 : 0.18) + (1 - this.flyK) * (this.surfK * -0.16 + (1 - this.surfK) * speedLean)
-      + clamp(aFwd * 0.012, -0.12, 0.14) * (this.grounded ? 1 : 0.4);
+      + clamp(aFwd * 0.012, -0.12, 0.14) * (this.grounded ? 1 : 0.4)
+      + clamp(-(this.push.x * sh + this.push.z * ch) * 0.035, -0.1, 0.3);   // bend into a headwind
     this.lean += (targetLean - this.lean) * exp(7, dt);
     const targetRoll = clamp(-this.turnRate * this.speed * 0.022, -0.42, 0.42) * (this.grounded ? 1 : 1.3);
     this.roll += (targetRoll - this.roll) * exp(6, dt);
@@ -620,6 +628,12 @@ export class Player {
       const side = foot === 0 ? 1 : -1;
       const fx = p.x + ch * HIP_X * side * 1.4 + sh * 0.18, fz = p.z - sh * HIP_X * side * 1.4 + ch * 0.18;
       this.events.push({ type: 'step', x: fx, z: fz, side, heading: this.heading });
+    }
+
+    // a groove in the sand while sliding
+    if (this.surfing) {
+      this._slideD = (this._slideD ?? 0) + this.speed * dt;
+      if (this._slideD > 0.55) { this._slideD = 0; this.events.push({ type: 'step', x: p.x, z: p.z, side: 0, heading: this.heading, slide: true }); }
     }
 
     // squash & stretch spring (landings, take-off)
