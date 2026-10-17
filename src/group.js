@@ -65,7 +65,11 @@ varying float vSide, vU, vA;
 void main() {
   float e = 1. - vSide * vSide; e *= e;
   float pulse = 0.55 + 0.45 * sin(vU * 19. - uTime * 4.5);
-  gl_FragColor = vec4(uColor * (0.7 + 0.6 * pulse), e * vA);
+  // spun light: a bright core, fibres twisting along it and beads of glow travelling toward the other traveler
+  float fib = 0.8 + 0.2 * sin(vU * 160. + vSide * 9. - uTime * 2.);
+  float bead = pow(max(0., sin(vU * 31. - uTime * 5.)), 18.);
+  float core = exp(-vSide * vSide * 18.);
+  gl_FragColor = vec4(uColor * (0.7 + 0.6 * pulse) * fib + uColor * (bead * 1.4 + core * 0.8), (e * 0.8 + core * 0.4) * vA);
 }`;
 class Threads {
   constructor(scene) {

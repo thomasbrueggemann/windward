@@ -23,7 +23,7 @@ import { makeSoftDot } from './textures.js';
 import { makeGodRaysPass, makeGradePass } from './post.js';
 import { Group } from './group.js';
 import { Updrafts } from './world/updrafts.js';
-import { flightFx } from './flightfx.js';
+import { flightFx, SingRings } from './flightfx.js';
 import { Interiors } from './interiors/index.js';
 import { Passages } from './world/passages.js';
 
@@ -92,6 +92,7 @@ const sparkles = new ParticlePool(scene, 1400, true);
 const dustPool = new ParticlePool(scene, 1800, false);
 const ambient = new AmbientDust(scene);
 const fx = { sparkles, dust: dustPool };
+const singRing = new SingRings(scene);
 
 const input = new Input(canvas);
 const player = new Player(scene);
@@ -310,6 +311,7 @@ function singRings(who, dt, big = false) {
   if (who._ringT > 0) return;
   who._ringT = 0.22;
   const r = 3.2 + 3 * who.sing;
+  singRing.spawn(p.x, p.y + 1.0, p.z, r * 1.25);
   for (let i = 0; i < 16; i++) {
     const a = i / 16 * Math.PI * 2;
     sparkles.emit(p.x, p.y + 1.1, p.z, Math.cos(a) * r, 0.4, Math.sin(a) * r, 1.2, 0.12, 3, 2.4, 1.4, 0.9, 1.6, 0, -0.4);
@@ -319,6 +321,7 @@ function singRings(who, dt, big = false) {
 
 function shout(p) {
   audio.shout();
+  singRing.spawn(p.x, p.y + 1.0, p.z, 13, 1.5, 1);
   for (let i = 0; i < 48; i++) {
     const a = i / 48 * Math.PI * 2;
     sparkles.emit(p.x, p.y + 1.0, p.z, Math.cos(a) * 11, 0.9, Math.sin(a) * 11, 1.5, 0.22, 3, 2.6, 1.6, 1, 1.1, 0, -0.3);
@@ -778,6 +781,7 @@ function frame(nowMs, doRender = true) {
     snow > 0.5 ? new THREE.Color(1, 1, 1) : SAND, snow > 0.5 ? 0.12 : 0.07, 0.55);
   sandStreams(dt, pal);
   updrafts.update(dt, time, camera, renderer, env);
+  singRing.update(dt);
   sparkles.update(dt, camera, renderer);
   dustPool.update(dt, camera, renderer);
 

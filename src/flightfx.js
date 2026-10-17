@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import { terrainHeight } from './world/heightfield.js';
 
 /**
@@ -62,5 +63,50 @@ export function flightFx(who, fx, audio, cam, dt, { listener = true } = {}) {
     const sh = Math.sin(who.heading), ch = Math.cos(who.heading), side = Math.random() < 0.5 ? -1 : 1;
     const wx = p.x + ch * side * 0.7 - sh * 0.3, wz = p.z - sh * side * 0.7 - ch * 0.3;
     sp.emit(wx, p.y + 0.9, wz, -v.x * 0.1, -0.2, -v.z * 0.1, 1.2, 0.07, 2.6, 1.9, 1.0, 0.7, 0.8, 0, -0.2);
+  }
+}
+
+// ------------------------------------------------------------ sing rings: expanding rings of light with glyph ticks
+const ringFrag = /* glsl */`
+precision highp float;
+uniform float uAge, uAmp; uniform vec3 uColor;
+varying vec2 vP;
+void main() {
+  float r = length(vP), ang = atan(vP.y, vP.x);
+  float w = 0.05 + 0.05 * uAge;
+  float ring = exp(-pow((r - 0.9) / w, 2.));
+  float ticks = 0.55 + 0.45 * step(0.5, fract(ang * 3.8197 + uAge * 0.6));
+  float halo = smoothstep(0.9, 0.55, r) * smoothstep(0.3, 0.9, r) * 0.25 + exp(-pow((r - 0.9) / 0.2, 2.)) * 0.2;
+  float inner = exp(-pow((r - 0.74) / 0.012, 2.)) * 0.5 * step(0.5, fract(ang * 5.093));
+  float a = (ring * ticks + halo + inner) * uAmp * pow(1. - uAge, 1.6) * smoothstep(1.02, 0.95, r);
+  gl_FragColor = vec4(uColor * a, a);
+}`;
+export class SingRings {
+  constructor(scene, n = 8) {
+    const geo = new THREE.PlaneGeometry(2, 2); geo.rotateX(-Math.PI / 2);
+    this.list = Array.from({ length: n }, () => {
+      const mat = new THREE.ShaderMaterial({
+        uniforms: { uAge: { value: 1 }, uAmp: { value: 1 }, uColor: { value: new THREE.Color(2.4, 1.8, 0.9) } },
+        vertexShader: 'varying vec2 vP; void main() { vP = position.xz; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.); }',
+        fragmentShader: ringFrag, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+      });
+      const m = new THREE.Mesh(geo, mat); m.visible = false; m.frustumCulled = false; m.renderOrder = 4; scene.add(m);
+      return { m, mat, age: 1, life: 1, R: 5 };
+    });
+    this.i = 0;
+  }
+  spawn(x, y, z, R = 5, life = 1.1, amp = 0.8) {
+    const r = this.list[this.i]; this.i = (this.i + 1) % this.list.length;
+    r.m.position.set(x, y, z); r.age = 0; r.life = life; r.R = R; r.m.visible = true; r.mat.uniforms.uAmp.value = amp;
+  }
+  update(dt) {
+    for (const r of this.list) {
+      if (!r.m.visible) continue;
+      r.age += dt / r.life;
+      if (r.age >= 1) { r.m.visible = false; continue; }
+      const e = 1 - Math.pow(1 - r.age, 2.2);
+      r.m.scale.setScalar(0.4 + r.R * e);
+      r.mat.uniforms.uAge.value = r.age;
+    }
   }
 }

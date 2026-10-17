@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { rngFor } from './seed.js';
 import { terrainHeight, clamp } from './heightfield.js';
 import { clothUniforms, clothFrag } from './cloth.js';
+import { makeSoftDot } from '../textures.js';
 
 const flapVert = /* glsl */`
 uniform float uTime, uPhase, uGlow, uFlap;
@@ -141,14 +142,57 @@ varying vec2 vUv; varying vec3 vN; varying vec3 vW;
 void main() { vUv = uv; vN = normalize(mat3(modelMatrix) * normal); vec4 w = modelMatrix * vec4(position, 1.); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`;
 const beamFrag = /* glsl */`
 precision highp float;
-uniform float uIntensity; uniform vec3 uColor;
+uniform float uIntensity, uTime; uniform vec3 uColor;
 varying vec2 vUv; varying vec3 vN; varying vec3 vW;
+float h21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5); }
 void main() {
   vec3 V = normalize(cameraPosition - vW);
-  float side = pow(abs(dot(normalize(vN), V)), 1.2);
-  float a = (0.12 + 0.88 * pow(vUv.y, 1.4)) * side * uIntensity * smoothstep(2., 14., length(cameraPosition - vW));
+  float cs = abs(dot(normalize(vN), V));
+  float side = pow(cs, 1.2);
+  float ang = vUv.x * 6.2832, y = vUv.y;
+  // volumetric look: slow drifting striations of lit haze, a hot thin core along the axis and glittering dust motes
+  float st = 0.68 + 0.32 * sin(ang * 9. + y * 4. - uTime * 0.7) * sin(ang * 4. - y * 7. + uTime * 0.5);
+  float core = pow(cs, 5.) * 0.6;
+  vec2 mc = vec2(floor(vUv.x * 70.), floor(y * 26. + uTime * 1.3));
+  float mote = step(0.965, h21(mc)) * (0.5 + 0.5 * sin(uTime * 4. + h21(mc + 3.) * 20.)) * smoothstep(0., 0.5, y);
+  float a = (0.12 + 0.88 * pow(y, 1.4)) * (side * st + core + mote * 0.8) * uIntensity * smoothstep(2., 14., length(cameraPosition - vW));
   gl_FragColor = vec4(uColor * a, a);
 }`;
+
+/** Weathered bronze-and-stone for the guardians: 3D noise pitting, verdigris, rain streaks, bump and cracks glowing with ember light. */
+function guardianMaterial(params, alertU) {
+  const mat = new THREE.MeshStandardMaterial({ roughness: 0.6, metalness: 0.35, ...params });
+  mat.onBeforeCompile = (sh) => {
+    sh.uniforms.uAlert = alertU;
+    sh.vertexShader = sh.vertexShader.replace('void main() {', 'varying vec3 vLP;\nvoid main() {').replace('#include <begin_vertex>', '#include <begin_vertex>\nvLP = position;');
+    sh.fragmentShader = sh.fragmentShader.replace('void main() {', `varying vec3 vLP; uniform float uAlert;
+float h31(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+float vn3(vec3 x) { vec3 i = floor(x), f = fract(x); f = f * f * (3. - 2. * f);
+  return mix(mix(mix(h31(i), h31(i + vec3(1, 0, 0)), f.x), mix(h31(i + vec3(0, 1, 0)), h31(i + vec3(1, 1, 0)), f.x), f.y),
+             mix(mix(h31(i + vec3(0, 0, 1)), h31(i + vec3(1, 0, 1)), f.x), mix(h31(i + vec3(0, 1, 1)), h31(i + vec3(1, 1, 1)), f.x), f.y), f.z); }
+void main() {`)
+      .replace('#include <map_fragment>', `#include <map_fragment>
+float nLo = vn3(vLP * 1.3 + 3.), nMid = vn3(vLP * 3.6), nHi = vn3(vLP * 11.);
+float hgt = nMid * 0.75 + nHi * 0.25;
+float stoneK = smoothstep(0.42, 0.62, nLo);
+diffuseColor.rgb = mix(vec3(0.52, 0.37, 0.19), vec3(0.4, 0.34, 0.27), stoneK) * (1.0 + 0.35 * hgt);
+float verd = smoothstep(0.58, 0.8, nMid * 0.7 + nLo * 0.4) * (1. - stoneK);
+diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.16, 0.34, 0.28) * (0.8 + 0.4 * nHi), verd * 0.7);
+diffuseColor.rgb *= 1. - 0.35 * smoothstep(0.3, 0.9, vn3(vec3(vLP.x * 5., vLP.y * 0.6, vLP.z * 5.)));
+float crackN = abs(vn3(vLP * 3.6 + 11.) - 0.5), crack = (1. - smoothstep(0.0, 0.016, crackN)) * smoothstep(0.35, 0.7, nLo + 0.3 * nMid);`)
+      .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = clamp(0.35 + 0.5 * stoneK + 0.35 * hgt + 0.2 * verd, 0.2, 1.);')
+      .replace('#include <metalnessmap_fragment>', '#include <metalnessmap_fragment>\nmetalnessFactor = mix(0.55, 0.05, stoneK) * (1. - verd);')
+      .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+{
+  vec3 q0 = dFdx(-vViewPosition), q1 = dFdy(-vViewPosition);
+  vec3 r1 = cross(q1, normal), r0 = cross(normal, q0);
+  float det = dot(q0, r1), dh0 = dFdx(hgt), dh1 = dFdy(hgt);
+  normal = normalize(abs(det) * normal - sign(det) * (dh0 * r1 + dh1 * r0) * 0.16 * faceDirection);
+}`)
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += vec3(1.0, 0.36, 0.08) * crack * (0.5 + 1.8 * uAlert);');
+  };
+  return mat;
+}
 
 const N_SEG = 24, SPACING = 1.5;
 const _up = new THREE.Vector3(0, 1, 0), _m = new THREE.Matrix4(), _s = new THREE.Vector3(), _f = new THREE.Vector3(), _r = new THREE.Vector3(), _u = new THREE.Vector3();
@@ -184,18 +228,24 @@ export class Guardian {
 
     const geo = new THREE.OctahedronGeometry(1, 1);
     geo.scale(1.0, 0.2, 0.85);
-    const mat = new THREE.MeshStandardMaterial({ color: 0x9a7a4a, metalness: 0.7, roughness: 0.4, emissive: 0x6a2a08, emissiveIntensity: 0.55 });
+    this.alertU = { value: 0 };
+    const mat = guardianMaterial({ color: 0xffffff, emissive: 0x6a2a08, emissiveIntensity: 0.22 }, this.alertU);
     this.body = new THREE.InstancedMesh(geo, mat, N_SEG);
     this.body.frustumCulled = false;
     scene.add(this.body);
 
     this.head = new THREE.Group();
     const hg = new THREE.OctahedronGeometry(1, 1); hg.scale(1.3, 0.55, 1.9);
-    this.head.add(new THREE.Mesh(hg, new THREE.MeshStandardMaterial({ color: 0x7a5a38, metalness: 0.75, roughness: 0.35, emissive: 0x4a1a05, emissiveIntensity: 0.5 })));
+    this.head.add(new THREE.Mesh(hg, guardianMaterial({ color: 0xcfc0a8, emissive: 0x4a1a05, emissiveIntensity: 0.2 }, this.alertU)));
     this.lampMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(3.2, 2.2, 1.0) });
+    this.haloMat = new THREE.SpriteMaterial({ map: makeSoftDot(), color: new THREE.Color(2.4, 1.3, 0.5), transparent: true, opacity: 0.7, blending: THREE.AdditiveBlending, depthWrite: false, fog: false });
     for (const sx of [-0.5, 0.5]) {
+      // an ominous lamp-eye: hot slit core inside a deep socket, with a bloom halo
+      const sock = new THREE.Mesh(new THREE.SphereGeometry(0.27, 12, 8), new THREE.MeshBasicMaterial({ color: 0x080302 }));
+      sock.position.set(sx, -0.1, 1.42); sock.scale.set(1, 0.8, 0.7); this.head.add(sock);
       const l = new THREE.Mesh(new THREE.SphereGeometry(0.2, 12, 8), this.lampMat);
-      l.position.set(sx, -0.12, 1.5); this.head.add(l);
+      l.position.set(sx, -0.12, 1.55); l.scale.set(0.7, 1.15, 0.7); this.head.add(l);
+      const h = new THREE.Sprite(this.haloMat); h.scale.set(1.6, 1.6, 1); h.position.set(sx, -0.12, 1.65); this.head.add(h);
     }
     scene.add(this.head);
 
@@ -204,7 +254,7 @@ export class Guardian {
     const cg = new THREE.CylinderGeometry(0.3, BEAM_LEN * tan, BEAM_LEN, 28, 1, true); cg.translate(0, -BEAM_LEN / 2, 0);
     this._cosBuilt = GUARDIAN_TUNING.cos;
     this.beamMat = new THREE.ShaderMaterial({
-      uniforms: { uIntensity: { value: 0.5 }, uColor: { value: new THREE.Color(2.4, 1.8, 0.9) } },
+      uniforms: { uIntensity: { value: 0.5 }, uTime: { value: 0 }, uColor: { value: new THREE.Color(2.4, 1.8, 0.9) } },
       vertexShader: beamVert, fragmentShader: beamFrag, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
     });
     this.beam = new THREE.Mesh(cg, this.beamMat); this.beam.frustumCulled = false; this.beam.renderOrder = 3;
@@ -373,6 +423,9 @@ export class Guardian {
     this.beamMat.uniforms.uIntensity.value = 0.5 + 0.45 * alertK;
     const lamp = 0.15 + 0.85 * on;
     this.lampMat.color.setRGB((3.2 + 1.6 * alertK) * lamp, (2.2 - 1.1 * alertK) * lamp, (1.0 - 0.6 * alertK) * lamp);
+    this.haloMat.color.setRGB((2.4 + 1.2 * alertK) * lamp, (1.3 - 0.7 * alertK) * lamp, (0.5 - 0.35 * alertK) * lamp);
+    this.alertU.value = alertK;
+    this.beamMat.uniforms.uTime.value = time;
     // where the cone meets the sand: a few refinement steps along the beam
     if (on && this.beamDir.y < -0.15) {
       let t = (head.y - gy) / -this.beamDir.y;
