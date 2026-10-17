@@ -1,16 +1,9 @@
 import * as THREE from 'three';
-import { rng } from '../noise.js';
 import { terrainHeight, terrainGradient, pathX, zAtProgress, clamp, smooth } from './heightfield.js';
+import { rngFor } from './seed.js';
+import { PLAN, onPath, addSite } from './layout.js';
 import { makeFloatingCloth, ClothBanner, clothUniforms } from './cloth.js';
 import { makeGlyphSprite, makeSoftDot, makeRingTexture } from '../textures.js';
-
-const GLYPH_SPOTS = [
-  // [z, lateral offset, extra height]
-  [-45, 9, 0], [-150, -16, 1.5], [-285, 30, 0], [-430, -26, 2.5], [-560, 12, 0],
-  [-700, 6, 0], [-790, -10, 2], [-905, 18, 0], [-985, -6, 4],
-  [-1085, 4, 0], [-1190, -10, 3], [-1300, 12, 0], [-1425, -8, 5],
-  [-1625, 10, 0], [-1770, -14, 1], [-1900, 8, 0],
-];
 
 const shaftVert = /* glsl */`
 varying vec2 vUv; varying vec3 vN; varying vec3 vW;
@@ -46,7 +39,7 @@ function makeBeamTexture() {
 export class Props {
   constructor(scene, ruins, fx) {
     this.scene = scene; this.ruins = ruins; this.fx = fx;
-    this.r = rng(4242);
+    this.r = rngFor('props');
     this.events = [];
     this._pending = [];
     this._camPos = null;
@@ -56,8 +49,13 @@ export class Props {
     const gtex = [0, 1, 2, 3, 4, 5].map(makeGlyphSprite);
     const beamTex = makeBeamTexture();
     const ringTex = makeRingTexture();
-    GLYPH_SPOTS.forEach(([z, off, up], i) => {
-      const x = pathX(z) + off, y = terrainHeight(x, z) + 1.8 + up;
+    const inside = (x, z) => ruins.colliders.some((c) => Math.hypot(c.x - x, c.z - z) < (c.r ?? Math.hypot(c.hx, c.hz)) + 2);
+    PLAN.glyphs.forEach(({ p, side, up }, i) => {
+      // slide toward the path until clear of any stone
+      let [x, z] = onPath(p, side);
+      for (let k = 0; k < 12 && inside(x, z); k++) x -= side / 12;
+      const y = terrainHeight(x, z) + 1.8 + up;
+      addSite('glyph', x, z, { y, r: 1, index: i });
       const mat = new THREE.SpriteMaterial({ map: gtex[i % 6], color: new THREE.Color(3.4, 2.7, 1.6), blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, fog: false });
       const spr = new THREE.Sprite(mat); spr.scale.set(1.7, 1.7, 1); spr.position.set(x, y, z);
       const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: ringTex, color: new THREE.Color(1.6, 1.2, 0.7), blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, fog: false }));
@@ -81,7 +79,7 @@ export class Props {
       this.cloth.mesh.count = this.pieces.length;
     };
     this.addPiece = addPiece;
-    for (let z = -70; z > -2030; z -= 55 + r() * 45) {
+    for (let z = -70; z > zAtProgress(0.993); z -= 55 + r() * 45) {
       const n = 2 + ((r() * 3) | 0);
       const cx = pathX(z) + (r() - .5) * 36;
       for (let k = 0; k < n; k++) {
@@ -94,10 +92,11 @@ export class Props {
 
     // ---------------------------------------------------- dormant banners (they wake when sung to)
     this.banners = [];
-    const extra = [[-140, 24], [-385, 20], [-1700, 22]];
-    for (const [z, span] of extra) {
-      const x = pathX(z);
-      ruins._postPair(x, z, 0, new THREE.Vector3(Math.cos(0.3), 0, Math.sin(0.3)), span);
+    const firstPost = ruins.posts.length;
+    for (const { p, span } of PLAN.banners) {
+      const [x, z] = onPath(p), a = 0.3 * (r() < 0.5 ? -1 : 1) + (r() - .5) * 0.2;
+      ruins._postPair(x, z, 0, new THREE.Vector3(Math.cos(a), 0, Math.sin(a)), span);
+      addSite('banner', x, z, { y: terrainHeight(x, z), r: span / 2 });
     }
     ruins.posts.forEach((pp, bi) => {
       const b = new ClothBanner(scene, pp.a, pp.b, 4.4);
@@ -112,6 +111,8 @@ export class Props {
       }
       this.banners.push(b);
     });
+    /** the banner that teaches singing */
+    this.intro = this.banners[firstPost];
     this.updateMatrices();
 
     // ---------------------------------------------------- shafts of light in the depths
@@ -135,6 +136,7 @@ export class Props {
       scene.add(mesh);
       shaftMats.push(m);
       this.shafts.push({ mesh, x: cx, z, r: rb });
+      addSite('shaft', cx, z, { y: floor, r: rb });
     }
     this.shaftMats = shaftMats;
 

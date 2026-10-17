@@ -1,4 +1,8 @@
 // Procedural cave-painting "visions" shown at each shrine. Pure canvas line-art, revealed element by element.
+// The composition of each vision varies with the world seed.
+import { rngFor } from './world/seed.js';
+
+const spread = (r, n, a, b) => Array.from({ length: n }, (_, i) => a + (b - a) * (i + 0.25 + r() * 0.5) / n);
 const INK = '#6d2f12';
 const GOLD = '#e3a23a';
 const RED = '#b8321a';
@@ -51,38 +55,38 @@ function ground(g, W, y) {
 
 const MURALS = [
   // 1: a procession of travelers toward the mountain
-  (g, W, H) => [
-    () => sun(g, W * 0.5, H * 0.2, H * 0.07),
-    () => mountain(g, W * 0.5, H * 0.62, W * 0.34, H * 0.34),
+  (g, W, H, r) => [
+    () => sun(g, W * (0.4 + r() * 0.2), H * 0.2, H * (0.06 + r() * 0.02), 12 + 4 * ((r() * 3) | 0)),
+    () => mountain(g, W * 0.5, H * 0.62, W * (0.3 + r() * 0.1), H * (0.3 + r() * 0.08)),
     () => ground(g, W, H * 0.66),
-    ...[0.14, 0.24, 0.34, 0.66, 0.76, 0.86].map((u, i) => () => figure(g, W * u, H * 0.8 + (i % 2) * 8, 1.35 + (i % 3) * 0.1)),
+    ...[...spread(r, 2 + ((r() * 3) | 0), 0.1, 0.38), ...spread(r, 2 + ((r() * 3) | 0), 0.62, 0.9)].map((u, i) => () => figure(g, W * u, H * 0.8 + (i % 2) * 8, 1.35 + (i % 3) * 0.1)),
     () => cloth(g, W * 0.1, H * 0.46, W * 0.3, 18),
     () => cloth(g, W * 0.6, H * 0.5, W * 0.3, 18),
   ],
   // 2: a thriving city, cloth powering everything
-  (g, W, H) => [
-    () => sun(g, W * 0.5, H * 0.16, H * 0.06, 24),
-    ...[0.16, 0.3, 0.5, 0.7, 0.84].map((u, i) => () => tower(g, W * u, H * 0.7, 56 + (i % 2) * 20, 150 + ((i * 53) % 90))),
+  (g, W, H, r) => [
+    () => sun(g, W * (0.35 + r() * 0.3), H * 0.16, H * 0.06, 24),
+    ...spread(r, 4 + ((r() * 3) | 0), 0.1, 0.9).map((u, i) => { const w = 50 + r() * 28, h = 130 + r() * 120; return () => tower(g, W * u, H * 0.7, w, h); }),
     () => ground(g, W, H * 0.72),
     () => cloth(g, W * 0.12, H * 0.38, W * 0.76, 26, RED, 9),
     () => cloth(g, W * 0.1, H * 0.46, W * 0.8, -22, RED, 7),
     ...[0.22, 0.4, 0.58, 0.78].map((u) => () => figure(g, W * u, H * 0.86, 1.3)),
   ],
   // 3: war and ruin
-  (g, W, H) => [
-    () => spikes(g, W * 0.5, H * 0.2, H * 0.055, 20),
-    ...[0.18, 0.38, 0.62, 0.82].map((u, i) => () => { g.save(); g.translate(W * u, H * 0.7); g.rotate((i - 1.5) * 0.14); tower(g, 0, 0, 52, 130); g.restore(); }),
+  (g, W, H, r) => [
+    () => spikes(g, W * (0.4 + r() * 0.2), H * 0.2, H * 0.055, 16 + ((r() * 8) | 0)),
+    ...spread(r, 3 + ((r() * 3) | 0), 0.12, 0.88).map((u) => { const a = (r() - 0.5) * 0.5, h = 110 + r() * 50; return () => { g.save(); g.translate(W * u, H * 0.7); g.rotate(a); tower(g, 0, 0, 52, h); g.restore(); }; }),
     () => ground(g, W, H * 0.72),
     () => { g.save(); g.strokeStyle = INK; g.lineWidth = 4; for (let i = 0; i < 12; i++) { const x = W * (0.12 + i * 0.07); g.beginPath(); g.moveTo(x, H * 0.36 + (i % 3) * 20); g.lineTo(x + 24, H * 0.6 + (i % 4) * 14); g.stroke(); } g.restore(); },
     ...[0.3, 0.5, 0.7].map((u, i) => () => { g.save(); g.translate(W * u, H * 0.88); g.rotate(i === 1 ? 1.4 : -0.3); figure(g, 0, 0, 1.2, false, '#7a3a28'); g.restore(); }),
     () => cloth(g, W * 0.2, H * 0.52, W * 0.6, 12, '#7a7a7a', 6),
   ],
   // 4: one traveler, the long climb
-  (g, W, H) => [
-    () => mountain(g, W * 0.62, H * 0.82, W * 0.56, H * 0.62),
-    () => sun(g, W * 0.18, H * 0.2, H * 0.05, 12),
+  (g, W, H, r) => [
+    () => mountain(g, W * 0.62, H * 0.82, W * (0.5 + r() * 0.1), H * (0.56 + r() * 0.1)),
+    () => sun(g, W * (0.12 + r() * 0.12), H * 0.2, H * 0.05, 12),
     () => ground(g, W, H * 0.86),
-    ...[0.1, 0.17, 0.24, 0.31].map((u) => () => figure(g, W * u, H * 0.93, 1.0, false, '#c9a89a')),
+    ...spread(r, 2 + ((r() * 4) | 0), 0.06, 0.36).map((u) => () => figure(g, W * u, H * 0.93, 1.0, false, '#c9a89a')),
     () => figure(g, W * 0.46, H * 0.9, 1.6),
     () => { g.save(); g.strokeStyle = GOLD; g.lineWidth = 4; g.setLineDash([2, 12]); g.beginPath(); g.moveTo(W * 0.5, H * 0.82); g.bezierCurveTo(W * 0.56, H * 0.6, W * 0.7, H * 0.5, W * 0.62, H * 0.3); g.stroke(); g.restore(); },
   ],
@@ -104,7 +108,7 @@ export function drawMural(canvas, index, t) {
   g.globalAlpha = 1;
   g.beginPath(); g.rect(152, 82, w - 304, h - 164); g.clip();
   g.translate(152, 82);
-  const items = MURALS[index % MURALS.length](g, w - 304, h - 164);
+  const items = MURALS[index % MURALS.length](g, w - 304, h - 164, rngFor('mural' + index));
   const n = items.length;
   for (let i = 0; i < n; i++) {
     const a = Math.max(0, Math.min(1, t * (n + 2) - i));

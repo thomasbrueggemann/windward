@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import { rngFor, range, sign } from './seed.js';
+import { PLAN } from './layout.js';
 import { terrainHeight, pathX, zAtProgress, smooth } from './heightfield.js';
 import { clothUniforms, clothFrag } from './cloth.js';
 
@@ -13,17 +15,19 @@ import { clothUniforms, clothFrag } from './cloth.js';
 
 /** Default spots along the hand-made route: a few in the dunes, one in each plaza of the ruined city, two on the ascent. */
 export function defaultUpdraftPositions() {
-  const at = (p, dx = 0, dz = 0, r = 5, h = 40) => { const z = zAtProgress(p) + dz; return { x: pathX(z) + dx, z, r, h }; };
+  const r = rngFor('updrafts');
+  const at = (p, dx = 0, dz = 0, rad = 5, h = 40) => { const z = zAtProgress(p) + dz; return { x: pathX(z) + dx, z, r: rad, h }; };
+  const pz = PLAN.plazas.map((q) => q.p);
   return [
-    at(0.037, 16, 0, 5.5, 36),     // just past the first stone gateway: the first taste of soaring
-    at(0.12, -20, 0, 5.5, 40),
-    at(0.20, 18, 0, 5.5, 44),
-    at(0.262, -14, 0, 5, 42),      // before the first shrine
-    at(0.340, 0, 10, 5, 46),       // gate plaza, between the arch and the columns
-    at(0.402, 0, 10, 4.5, 44),     // down the middle of the colonnade
-    at(0.462, 14, -12, 5, 48),     // beside the temple ziggurat
-    at(0.80, -12, 0, 5, 40),       // the ascent, where gusts push you back down
-    at(0.86, 10, 0, 5, 42),
+    at(0.037 + range(r, 0, 0.01), sign(r) * range(r, 12, 20), 0, 5.5, 36),     // just past the first gateway: the first taste of soaring
+    at(range(r, 0.10, 0.14), sign(r) * range(r, 14, 24), 0, 5.5, 40),
+    at(range(r, 0.18, 0.22), sign(r) * range(r, 14, 24), 0, 5.5, 44),
+    at(PLAN.shrines[0].p - 0.025, -Math.sign(PLAN.shrines[0].side) * range(r, 10, 16), 0, 5, 42),   // before the first shrine
+    at(pz[0], range(r, -3, 3), 10, 5, 46),     // in each plaza of the ruined city
+    at(pz[1], range(r, -3, 3), 10, 4.5, 44),
+    at(pz[2], sign(r) * range(r, 10, 16), -12, 5, 48),
+    at(range(r, 0.79, 0.82), sign(r) * range(r, 9, 14), 0, 5, 40),     // the ascent, where gusts push you back down
+    at(range(r, 0.85, 0.88), sign(r) * range(r, 8, 13), 0, 5, 42),
   ];
 }
 

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { rngFor, range } from './world/seed.js';
 import { Companion } from './companion.js';
 import { pathX, progressAt, zAtProgress, terrainHeight, trenchAmount, clamp, smooth } from './world/heightfield.js';
 import { makeSoftDot } from './textures.js';
@@ -17,7 +18,8 @@ export const COMPANION_DEFS = [
   { scarf: [0.66, 0.24, 0.04], glyphs: 2, personality: { pace: -1.6, chatty: 0.95, wander: 0.3, curiosity: 0.3 } },    // short scarf, lags, sings a lot
   { scarf: [0.42, 0.11, 0.07], glyphs: 9, personality: { pace: 0.8, chatty: 0.2, wander: 0.15, curiosity: 0.6 } },     // long scarf, quiet and steady
 ];
-const APPEAR_PROGRESS = [0.085, 0.345, 0.545, 0.795];
+const _ar = rngFor('companions');
+const APPEAR_PROGRESS = [0.085, 0.345, 0.545, 0.795].map((p) => p + range(_ar, -0.012, 0.012));   // a little different every world
 
 /**
  * Where the travelers wait to be met: a high, clear spot (a crest, or beside a ruin) near each chapter's progress.

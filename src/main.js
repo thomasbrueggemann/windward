@@ -6,7 +6,9 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { makeSandUniforms, makeSandMaterial, Terrain, buildFarTerrain } from './world/terrain.js';
 import { makeSky, makeSummitLight } from './world/sky.js';
 import { samplePalette, blendParadise } from './world/palette.js';
-import { terrainHeight, terrainGradient, progressAt, zAtProgress, pathX, summitPoint, WIND, clamp, smooth } from './world/heightfield.js';
+import { terrainHeight, terrainGradient, progressAt, zAtProgress, pathX, summitPoint, WIND, PATH_LEN, clamp, smooth } from './world/heightfield.js';
+import { SEED } from './world/seed.js';
+import { PLAN, SITES, onPath } from './world/layout.js';
 import { Ruins } from './world/ruins.js';
 import { Props } from './world/props.js';
 import { clothUniforms } from './world/cloth.js';
@@ -98,9 +100,9 @@ const env = { sunDir: new THREE.Vector3(), pal: null, progress: 0 };
 const props = new Props(scene, ruins, fx);
 props._camPos = camera.position;
 const flyers = new Flyers(scene);
-for (const [z, n] of [[-210, 3], [-330, 2], [-480, 3], [-620, 2], [-780, 2], [-900, 2], [-1130, 3], [-1260, 4], [-1400, 3], [-1650, 2], [-1850, 2]]) flyers.spawn(pathX(z), z, n);
-const introBanner = props.banners.find((b) => Math.abs(b.center.z + 140) < 40);
-const guardians = [0.402, 0.60, 0.675].map((p) => { const z = zAtProgress(p); return new Guardian(scene, pathX(z), z, 48); });
+for (const f of PLAN.flyers) flyers.spawn(...onPath(f.p, f.side), f.n);
+const introBanner = props.intro;
+const guardians = PLAN.guardians.map((p) => new Guardian(scene, ...onPath(p), 48));
 const group = new Group(scene, { ruins, props });   // the other travelers (spots come from companionSpots(ruins) unless given)
 // flight: wind columns lift whoever passes env; cloth creatures and companions give a ribbon boost when flown close to
 const updrafts = new Updrafts(scene);
@@ -180,9 +182,7 @@ function applySettings() {
 }
 applySettings();
 window.__THREE = THREE;
-window.__game = { hf: { terrainHeight, terrainGradient, pathX }, companion: group.members[0], group, player, cam, env, scene, camera, game, terrain, renderer, input, props, guardians, flyers, audio, ruins, summitPoint };
-
-window.__game.updrafts = updrafts;
+window.__game = { seed: SEED, sites: SITES, plan: PLAN, hf: { terrainHeight, terrainGradient, pathX }, companion: group.members[0], group, updrafts, player, cam, env, scene, camera, game, terrain, renderer, input, props, guardians, flyers, audio, ruins, summitPoint };
 
 const SAND = new THREE.Color();
 const tmp = new THREE.Vector3();
@@ -227,7 +227,7 @@ function updateChapter(prog) {
 
 // ------------------------------------------------------------------ progress (per browser): resume at the last chapter reached
 const SAVE_KEY = 'journey-progress';
-function saveProgress(o) { try { localStorage.setItem(SAVE_KEY, JSON.stringify(o)); } catch (e) { /* storage unavailable */ } }
+function saveProgress(o) { try { localStorage.setItem(SAVE_KEY, JSON.stringify({ ...o, seed: SEED })); } catch (e) { /* storage unavailable */ } }
 function loadProgress() { try { return JSON.parse(localStorage.getItem(SAVE_KEY) || 'null'); } catch (e) { return null; } }
 function clearProgress() { try { localStorage.removeItem(SAVE_KEY); } catch (e) { /* storage unavailable */ } }
 
@@ -685,7 +685,7 @@ function frame(nowMs, doRender = true) {
     // contextual hints
     const b0 = introBanner;
     if (b0 && !b0.awakened && Math.hypot(b0.center.x - player.pos.x, b0.center.z - player.pos.z) < 55) showHint('sing', input.isTouch ? 'Hold <b>SING</b> — the grey cloth will answer.' : 'Hold <b>E</b> or <b>right-click</b> to sing — the grey cloth will answer.', 9000);
-    if (player.pos.z < -2035 && game.state === 'playing') startEnding();
+    if (player.pos.z < 10 - PATH_LEN && game.state === 'playing') startEnding();
     const upd = updrafts.nearest(player.pos);
     if (upd && upd.dist < 45 && game.hints.controls) showHint('updraft', 'A column of wind. Glide or walk into it and let it carry you up.', 7000);
     if (!player.grounded && player.charge < 0.02 && game.hints.controls) showHint('glide', input.isTouch ? 'Tap <b>GLIDE</b> to spread your robe · hold <b>DIVE</b> to plunge, release near the ground to swoop.' : 'Press <b>C</b> to glide · hold <b>shift</b> to dive, release near the ground to swoop.', 8000);
@@ -831,9 +831,17 @@ invEl.addEventListener('change', () => { settings.invertY = invEl.checked; apply
 volEl.addEventListener('input', () => { settings.volume = +volEl.value; applySettings(); });
 // losing pointer lock mid-game (Esc) opens the menu
 document.addEventListener('pointerlockchange', () => { if (!document.pointerLockElement && game.state === 'playing' && input.lockedOnce) togglePause(true); });
-startBtn.addEventListener('click', () => { if (game.state === 'title' && loadProgress()) clearProgress(); begin(); });
-// a journey left unfinished can be resumed from the start of the chapter it reached
-const saved = q.has('p') || q.has('auto') ? null : loadProgress();
+// a journey left unfinished can be resumed from the start of the chapter it reached (in the world it was begun in)
+let saved = q.has('p') || q.has('auto') ? null : loadProgress();
+if (saved && saved.seed !== undefined && saved.seed !== SEED) saved = null;
+$('worldSeed').textContent = `World ${SEED}`;
+startBtn.addEventListener('click', () => {
+  if (game.state !== 'title') return;
+  if (loadProgress()) clearProgress();
+  // this world was rebuilt from the save: a new journey needs a fresh one
+  if (saved && saved.seed === SEED && !q.has('seed')) { try { sessionStorage.setItem('journey-begin', '1'); } catch (e) { /* storage unavailable */ } location.reload(); return; }
+  begin();
+});
 if (saved && CHAPTERS[saved.chapter]) {
   const cont = $('continue');
   cont.style.display = '';
@@ -856,3 +864,8 @@ if (saved && CHAPTERS[saved.chapter]) {
 }
 window.addEventListener('keydown', (e) => { if (game.state === 'title' && (e.code === 'Enter' || e.code === 'Space')) begin(); });
 if (q.has('auto')) begin();
+else if ((() => { try { const b = sessionStorage.getItem('journey-begin'); sessionStorage.removeItem('journey-begin'); return b; } catch (e) { return null; } })()) {
+  begin();   // straight in after "New journey" reloaded a fresh world; sound starts with the first input
+  const wake = () => { if (!q.has('mute')) audio.start(); window.removeEventListener('pointerdown', wake); window.removeEventListener('keydown', wake); };
+  window.addEventListener('pointerdown', wake); window.addEventListener('keydown', wake);
+}
