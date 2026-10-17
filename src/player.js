@@ -259,11 +259,14 @@ export class Scarf {
       const vx = (p.x - q.x) * idt, vy = (p.y - q.y) * idt, vz = (p.z - q.z) * idt;
       q.copy(p);
       const f = i / n;
-      const ph = time * 2.6 - i * 0.45;
-      const wave = 2.2 * flutter * (0.35 + f);
-      let ax = -drag * (vx - wx) + Math.sin(ph) * wave;
-      let ay = -drag * vy - 5.5 + 3.4 * buoy + Math.sin(ph * 1.2 + 1.1) * wave * 1.2;
-      let az = -drag * (vz - wz) + Math.cos(ph * 0.9) * wave;
+      // a flag-like wave travelling down the cloth, quicker and stronger the faster the air rushes past
+      const ph = time * (2.6 + speed * 0.45) - i * 0.62;
+      const wave = (2.0 + speed * 0.9) * flutter * (0.3 + f);
+      const sx = -back.z, sz = back.x;            // sideways, across the traveler's back
+      const flap = Math.sin(ph) * wave, lift = Math.sin(ph * 1.3 + 1.1) * wave * 1.25;
+      let ax = -drag * (vx - wx) + sx * flap + Math.sin(ph * 0.7) * wave * 0.3;
+      let ay = -drag * vy - 5.5 + 3.4 * buoy + lift;
+      let az = -drag * (vz - wz) + sz * flap + Math.cos(ph * 0.9) * wave * 0.3;
       if (back) {
         const K = 9 / (1 + i * 0.6);
         const along = 0.12 + i * L, hz = along * hor, vt = along * down;
@@ -297,10 +300,11 @@ export class Scarf {
         }
       }
     }
-    // light smoothing so the cloth curves instead of zig-zagging
+    // light smoothing so the cloth curves instead of zig-zagging (frame-rate independent)
+    const sm = 1 - Math.pow(0.8, dt * 60);
     for (let i = 2; i < n - 1; i++) {
       const a = P[i - 1], b = P[i + 1], c = P[i];
-      c.x += ((a.x + b.x) * 0.5 - c.x) * 0.3; c.y += ((a.y + b.y) * 0.5 - c.y) * 0.3; c.z += ((a.z + b.z) * 0.5 - c.z) * 0.3;
+      c.x += ((a.x + b.x) * 0.5 - c.x) * sm; c.y += ((a.y + b.y) * 0.5 - c.y) * sm; c.z += ((a.z + b.z) * 0.5 - c.z) * sm;
     }
     for (let i = 2; i < n; i++) {
       const gy = terrainHeight(P[i].x, P[i].z) + 0.06;
