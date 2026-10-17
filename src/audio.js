@@ -334,6 +334,14 @@ export class AudioEngine {
     [0, 7, 12, 16, 24].forEach((o, i) => this._bell(base + o, t + i * 0.03, 0.07, 3.2));
     this._noiseBurst(t, 0.9, 2400, 0.7, 0.03);
   }
+  /** Several voices together (a traveler joins, or the group's song parts the storm): a chord, one voice per traveler. */
+  chorus(n = 1) {
+    if (!this.ready) return; const t = this.ctx.currentTime;
+    const base = 66 + (this.mood === 2 ? -5 : 0);
+    const notes = [0, 7, 12, 16, 19, 24, 28].slice(0, Math.min(7, 2 + n));
+    notes.forEach((o, i) => this._bell(base + o, t + i * 0.16, 0.075, 4.5));
+    this.intensity = Math.min(1, this.intensity + 0.1);
+  }
   gust(strength = 1) {
     if (!this.ready) return; const ctx = this.ctx, t = ctx.currentTime;
     const s = this._noiseSrc(false); const f = ctx.createBiquadFilter(); f.type = 'bandpass'; f.Q.value = 0.8;

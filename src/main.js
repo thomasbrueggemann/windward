@@ -19,7 +19,7 @@ import { AudioEngine } from './audio.js';
 import { drawMural } from './murals.js';
 import { makeSoftDot } from './textures.js';
 import { makeGodRaysPass, makeGradePass } from './post.js';
-import { Companion } from './companion.js';
+import { Group } from './group.js';
 
 window.addEventListener('error', (e) => { $('err').textContent += (e.message || e) + '\n'; });
 function $(id) { return document.getElementById(id); }
@@ -99,7 +99,7 @@ const flyers = new Flyers(scene);
 for (const [z, n] of [[-210, 3], [-330, 2], [-480, 3], [-620, 2], [-780, 2], [-900, 2], [-1130, 3], [-1260, 4], [-1400, 3], [-1650, 2], [-1850, 2]]) flyers.spawn(pathX(z), z, n);
 const introBanner = props.banners.find((b) => Math.abs(b.center.z + 140) < 40);
 const guardians = [0.402, 0.60, 0.675].map((p) => { const z = zAtProgress(p); return new Guardian(scene, pathX(z), z, 48); });
-const companion = new Companion(scene, ruins.colliders, ruins.shelters);
+const group = new Group(scene, { ruins, props });   // the other travelers (spots come from companionSpots(ruins) unless given)
 
 // ------------------------------------------------------------------ palette
 const ROCK_DESERT = new THREE.Color('#5a4a42'), ROCK_CAVE = new THREE.Color('#14243a'), ROCK_SNOW = new THREE.Color('#4a5670');
@@ -126,7 +126,7 @@ function applyPalette(p) {
   sunLight.position.copy(pal.sun).multiplyScalar(100).add(player.pos);
   sunLight.target.position.copy(player.pos);
   hemi.color.copy(pal.amb); hemi.groundColor.copy(pal.grd);
-  for (const s of [player.scarf.uniforms, companion.p.scarf.uniforms]) {
+  for (const s of [player.scarf.uniforms, ...group.scarfUniforms()]) {
     s.uSunDir.value.copy(pal.sun); s.uSunColor.value.copy(pal.sunC).multiplyScalar(pal.sunI * 0.35);
     s.uAmb.value.copy(pal.amb); s.uFog.value.copy(pal.fog); s.uFogD.value = pal.fogD;
   }
@@ -168,7 +168,7 @@ function applySettings() {
 }
 applySettings();
 window.__THREE = THREE;
-window.__game = { hf: { terrainHeight, terrainGradient, pathX }, companion, player, cam, env, scene, camera, game, terrain, renderer, input, props, guardians, flyers, audio, ruins, summitPoint };
+window.__game = { hf: { terrainHeight, terrainGradient, pathX }, companion: group.members[0], group, player, cam, env, scene, camera, game, terrain, renderer, input, props, guardians, flyers, audio, ruins, summitPoint };
 
 const SAND = new THREE.Color();
 const tmp = new THREE.Vector3();
@@ -207,7 +207,7 @@ function updateChapter(prog) {
     el.innerHTML = `<span>${c.n}</span>${c.name}`;
     el.classList.remove('show'); void el.offsetWidth; el.classList.add('show');
     audio.chapter();
-    if (idx > 0) saveProgress({ chapter: idx, glyphs: player.glyphs, met: companion.met });
+    if (idx > 0) saveProgress({ chapter: idx, glyphs: player.glyphs, met: group.metCount() > 0, group: group.save() });
   }
 }
 
@@ -296,21 +296,23 @@ function shout(p) {
     sparkles.emit(p.x, p.y + 1.0, p.z, Math.cos(a) * 11, 0.9, Math.sin(a) * 11, 1.5, 0.22, 3, 2.6, 1.6, 1, 1.1, 0, -0.3);
     sparkles.emit(p.x, p.y + 1.6, p.z, Math.cos(a) * 6, 2.2, Math.sin(a) * 6, 1.3, 0.14, 2.6, 2.0, 1.2, 0.8, 1.4, 0, -0.2);
   }
-  props.wake(p, 48, fx);
+  // every traveler singing along carries the song further; together in the snow it parts the storm
+  props.wake(p, group.songRadius(48), fx);
+  group.onShout();
   cam.shake = Math.max(cam.shake, 0.25);
 }
 
-// ------------------------------------------------------------------ the other traveler
+// ------------------------------------------------------------------ the other travelers
 const _pan = new THREE.Vector3();
-function companionEvents(evs) {
-  const c = companion.p;
+function groupEvents(evs) {
   for (const e of evs) {
+    const c = e.who && e.who.p;
     if (e.type === 'chirp') {
       _pan.copy(c.pos).project(camera);
       audio.chirp(clamp(_pan.x, -1, 1) * (_pan.z < 1 ? 1 : -1), e.dist, e.big);
       if (e.big) shoutFrom(c);
       // a chirp answered close by fills the listener's scarf
-      if (e.dist < 14 && !player.frozen) {
+      if (e.dist < 14 && !player.frozen && e.who.state === 'travel') {
         player.charge = Math.min(1, player.charge + (e.big ? 0.8 : 0.35));
         player.flash = Math.max(player.flash, 0.5);
         for (let i = 0; i < 18; i++) {
@@ -320,15 +322,30 @@ function companionEvents(evs) {
         }
         audio.recharge();
       }
-    } else if (e.type === 'met') {
-      showHint('met', 'Another traveler. Walk together — singing close by fills each other\'s scarves.', 8000);
     } else if (e.type === 'join') {
-      showHint('companion', 'You are not alone. <b>Sing</b> to call to them.', 7000);
+      const n = group.travellers.length;
+      audio.chorus(n);
+      for (let i = 0; i < 30; i++) sparkles.emit(c.pos.x, c.pos.y + 1.2, c.pos.z, (Math.random() - .5) * 3, 1 + Math.random() * 2, (Math.random() - .5) * 3, 1.4, 0.14, 3, 2.4, 1.4, 1, 1.2, 0, -0.4);
+      if (n <= 1) showHint('companion', 'Another traveler. Walk together — close by, your scarves fill each other. <b>Sing</b> to call to them.', 8000);
+      else showHint('together', `${n} travelers walk with you. <b>Together you are stronger</b>: the more of you close by, the faster your scarves fill and the further your song carries.`, 9000);
+    } else if (e.type === 'rejoin') {
+      audio.chorus(group.travellers.length);
+      showHint('rejoin', 'Found again. No one is left behind.', 5000);
+    } else if (e.type === 'left') {
+      showHint(e.storm ? 'left-storm' : 'left', e.storm ? 'Someone is lost in the storm behind you. Go back and <b>sing</b> to find them — or walk on.' : 'A companion fell behind and sat down to wait. Go back and <b>sing</b> to fetch them.', 8000);
     } else if (e.type === 'share') {
-      if (Math.random() < 0.12) {
+      if (Math.random() < 0.08 + 0.05 * e.n) {
         const a = player.scarf.pts[1 + ((Math.random() * (player.scarf.n - 1)) | 0)];
         sparkles.emit(a.x, a.y, a.z, 0, 0.5, 0, 0.8, 0.09, 3, 2.3, 1.2, 1, 1, 0, -0.4);
       }
+    } else if (e.type === 'thaw') {
+      audio.chorus(e.n + 2);
+      const p = player.pos;
+      for (let i = 0; i < 64; i++) {
+        const a = i / 64 * Math.PI * 2;
+        sparkles.emit(p.x, p.y + 1.4, p.z, Math.cos(a) * 16, 1.5, Math.sin(a) * 16, 2.2, 0.3, 3, 2.4, 1.3, 1, 0.8, 0, -0.2);
+      }
+      showHint('thaw', 'Your voices together part the storm.', 6000);
     }
   }
 }
@@ -338,12 +355,14 @@ function shoutFrom(who) {
     const a = i / 32 * Math.PI * 2;
     sparkles.emit(p.x, p.y + 1.0, p.z, Math.cos(a) * 9, 0.8, Math.sin(a) * 9, 1.4, 0.18, 3, 2.5, 1.5, 1, 1.1, 0, -0.3);
   }
+  // the long call wakes cloth around the one who sings it too
+  props.wake(p, 22, fx);
 }
 
 // ------------------------------------------------------------------ mountain wind: gusts that push the traveler back down the slope
 function updateGusts(dt, prog) {
   const cold = smooth(0.78, 0.9, prog);
-  if (cold <= 0 || game.state !== 'playing') { game.gust = Math.max(0, game.gust - dt); player.push.set(0, 0, 0); companion.p.push.set(0, 0, 0); return 0; }
+  if (cold <= 0 || game.state !== 'playing') { game.gust = Math.max(0, game.gust - dt); for (const who of [player, ...group.bodies()]) who.push.set(0, 0, 0); return 0; }
   game.gustT -= dt;
   if (game.gustT <= 0 && game.gust <= 0) {
     game.gust = 3.4;
@@ -356,15 +375,17 @@ function updateGusts(dt, prog) {
     const k = Math.sin(clamp(1 - game.gust / 3.4, 0, 1) * Math.PI) * cold;   // swell and fade
     // the wind pours down from the summit
     const dx = -WIND.x, dz = -WIND.z;
-    for (const who of [player, companion.p]) {
+    for (const who of [player, ...group.bodies()]) {
       if (!who.group.visible || who.frozen || windShelter(who.pos, dx, dz)) { who.push.set(0, 0, 0); continue; }
-      who.push.set(dx * 7.5 * k, 0, dz * 7.5 * k);
-      if (!who.grounded) who.vel.y -= 5 * k * dt;
+      // huddled travelers shield each other from the gust
+      const m = group.windMul(who);
+      who.push.set(dx * 7.5 * k * m, 0, dz * 7.5 * k * m);
+      if (!who.grounded) who.vel.y -= 5 * k * m * dt;
     }
     cam.shake = Math.max(cam.shake, 0.4 * k);
     return k;
   }
-  player.push.set(0, 0, 0); companion.p.push.set(0, 0, 0);
+  for (const who of [player, ...group.bodies()]) who.push.set(0, 0, 0);
   return 0;
 }
 /** Is there stone just upwind (toward the summit) of this point? */
@@ -403,7 +424,7 @@ const ending = { t: 0, figures: [], from: new THREE.Vector3(), phase: 0, collaps
 function startEnding() {
   game.state = 'ending'; ending.t = 0; ending.phase = 0;
   player.frozen = true; $('hint').style.opacity = 0;
-  companion.p.setVisible(false); companion.state = 'gone';
+  group.startEnding(player, cam.yaw);
   flashEl.style.transition = 'none'; flashEl.style.background = '#fff'; flashEl.style.opacity = 0;
   for (let i = 0; i < 6; i++) {
     const m = buildTraveler({ white: true });
@@ -497,12 +518,33 @@ function updateEnding(dt, time) {
       clearProgress();
       const end = $('end'); end.style.opacity = 1; end.style.pointerEvents = 'auto';
       const found = props.glyphs.filter((g) => g.taken).length;
-      $('endStats').textContent = `symbols found  ${found} / ${props.glyphs.length}` + (companion.met ? '  ·  you travelled with a companion' : '');
+      $('endStats').innerHTML = `symbols found  ${found} / ${props.glyphs.length}` + endGroupText();
     }
   }
   player.collapse = ending.collapse;
   player.update(dt, { mx: 0, my: 0, jump: false, jumpPressed: false, sing: false }, cam.yaw, time, env);
   if (!player.scripted) player.pos.y = terrainHeight(player.pos.x, player.pos.z);
+  // the travelers who finished with you lie beside you, are revived with you and fly with you into the light
+  group.updateEnding(dt, time, t, player, env, ending.collapse);
+  if (ending.flying) for (const c of group.endingMembers()) {
+    if (Math.random() < 0.5) {
+      const a = c.p.scarf.pts[2 + ((Math.random() * (c.p.scarf.n - 2)) | 0)];
+      sparkles.emit(a.x, a.y, a.z, (Math.random() - .5) * .6, 0.3, (Math.random() - .5) * .6, 1.2, 0.1, 3, 2.4, 1.4, 1, 1, 0, -0.2);
+    }
+  }
+}
+
+/** The travelers who finished with you, for the end card: one dot in each one's scarf colour. */
+function endGroupText() {
+  const { huddled, rejoined } = group.endSummary();
+  const n = huddled + rejoined;
+  if (!n) return '';
+  const dots = group.members.filter((c) => c.met).map((c) => `<span style="color:#${c.color.clone().multiplyScalar(1.5).getHexString()}">●</span>`).join(' ');
+  const who = n === 1 ? 'one traveler' : `${['', '', 'two', 'three', 'four'][n] || n} travelers`;
+  let s = `<br>you reached the light together with ${who}  ${dots}`;
+  if (rejoined && huddled) s += `<br>${rejoined === 1 ? 'one' : rejoined} found you again at the summit`;
+  else if (rejoined) s += '<br>lost in the storm, they found you again at the summit';
+  return s;
 }
 
 // ------------------------------------------------------------------ where the traveler's hood turns
@@ -514,7 +556,8 @@ function pickLookTarget() {
     const d = Math.hypot(x - p.x, z - p.z);
     if (d < range && d * weight < best) { best = d * weight; _lt.set(x, y, z); found = true; }
   };
-  if (companion.visible) consider(companion.pos.x, companion.pos.y + 1.4, companion.pos.z, 20, 0.7);
+  const near = group.nearestVisible(p, 20);
+  if (near) consider(near.pos.x, near.pos.y + 1.4, near.pos.z, 20, 0.7);
   for (const g of props.glyphs) if (!g.taken) consider(g.spr.position.x, g.spr.position.y, g.spr.position.z, 24);
   for (const s of ruins.shrines) if (!s.seen) consider(s.x, s.y + 7, s.z, 40, 1.2);
   return found ? _lt : null;
@@ -541,6 +584,32 @@ function sandStreams(dt, pal) {
 }
 const _plumeCol = new THREE.Color();
 
+// ------------------------------------------------------------------ ?auto: walk the route by itself (testing), fetching travelers on the way
+const autoS = { singT: 4, hold: 0, stuckT: 0, last: new THREE.Vector3(), jumpT: 0 };
+function autoPilot(inp, dt) {
+  const pp = player.pos, A = autoS;
+  const w = group.members.find((c) => (c.state === 'waiting' || c.state === 'resting') && c.visible && c.dist < 90);
+  let tx, tz;
+  if (w) { tx = w.pos.x; tz = w.pos.z; } else { tz = pp.z - 25; tx = pathX(tz); }
+  // wait for stragglers so the group stays together
+  const lag = group.travellers.some((c) => c.dist > 20 && c.dist < 70);
+  let amt = (lag && !w) ? 0 : 1;
+  if (w && w.dist < 4) amt = 0;
+  const wx = tx - pp.x, wz = tz - pp.z, wl = Math.hypot(wx, wz) || 1;
+  const yaw = cam.yaw, fx = -Math.sin(yaw), fz = -Math.cos(yaw), rx = Math.cos(yaw), rz = -Math.sin(yaw);
+  inp.my = (wx * fx + wz * fz) / wl * amt; inp.mx = (wx * rx + wz * rz) / wl * amt;
+  const want = Math.atan2(-wx, -wz);
+  cam.yaw += Math.atan2(Math.sin(want - cam.yaw), Math.cos(want - cam.yaw)) * (1 - Math.exp(-1.5 * dt));
+  const moved = Math.hypot(pp.x - A.last.x, pp.z - A.last.z); A.last.copy(pp);
+  if (amt > 0.5 && moved < 1.0 * dt) A.stuckT += dt; else A.stuckT = Math.max(0, A.stuckT - dt);
+  if (A.stuckT > 0.6) { A.jumpT = 0.8; A.stuckT = 0; inp.jumpPressed = true; }
+  if (A.jumpT > 0) { A.jumpT -= dt; inp.jump = true; }
+  A.singT -= dt;
+  if (A.singT < 0) { A.hold = 1.3; A.singT = (w ? 3 : 8) + Math.random() * 4; }
+  if (A.hold > 0) { A.hold -= dt; inp.sing = true; }
+  inp.anyKey = game.state === 'vision' && game.visionT > 6;
+}
+
 // ------------------------------------------------------------------ main loop
 function frame(nowMs, doRender = true) {
   let dt = (nowMs - (frame.last ?? nowMs)) / 1000;
@@ -548,6 +617,7 @@ function frame(nowMs, doRender = true) {
   dt = Math.min(dt, 0.05);
   frame.last = nowMs;
   const inp = input.poll();
+  if (q.has('auto') && (game.state === 'playing' || game.state === 'vision')) autoPilot(inp, Math.min(dt, 0.05));
   if (inp.pausePressed && (game.state === 'playing' || game.state === 'paused')) togglePause();
   if (game.state === 'paused') { if (doRender) composer.render(); return; }
   game.time += dt;
@@ -562,16 +632,25 @@ function frame(nowMs, doRender = true) {
   if (game.state === 'playing' || game.state === 'vision') {
     const frozen = game.state === 'vision';
     cam.update(dt, player, frozen ? { lookX: 0, lookY: 0 } : inp, time, {});
-    player.cold = smooth(0.74, 0.95, prog);
+    player.cold = smooth(0.74, 0.95, prog) * group.coldMul();   // huddled with others the cold bites less
     if (!frozen) cam.shake = Math.max(cam.shake, 0.12 * player.cold);
     if (inp.zoom) cam.baseDist = clamp(cam.baseDist + inp.zoom * 0.6, 5, 13);
     player.lookTarget = pickLookTarget();
     player.update(dt, frozen ? { mx: 0, my: 0, jump: false, jumpPressed: false, sing: false } : inp, cam.yaw, time, env);
     playerFx(dt, time);
-    companionEvents(companion.update(dt, time, player, env, camera, frozen));
-    singRings(companion.p, dt);
-    if (companion.visible) for (const e of companion.p.events) if (e.type === 'step' && companion.p.grounded) props.addFootprint(e);
-    game.whiteout = updateGusts(dt, prog);
+    groupEvents(group.update(dt, time, player, env, camera, frozen));
+    for (const c of group.members) {
+      if (!c.visible) continue;
+      singRings(c.p, dt);
+      if (c.dist < 90) for (const e of c.p.events) if (e.type === 'step' && c.p.grounded) props.addFootprint(e);
+    }
+    game.whiteout = updateGusts(dt, prog) * (1 - group.thaw);
+    if (group.near > 0 && group.snow > 0.3) showHint('huddle', 'Stay close: huddled together, the wind and cold bite less. Hold a long note — sung together, it parts the storm.', 9000);
+    // the thaw: the group's song clears the blizzard around them for a while
+    if (group.thaw > 0) {
+      const k = 1 - 0.55 * group.thaw;
+      scene.fog.density *= k; nearMat.uniforms.uFogD.value *= k; farMat.uniforms.uFogD.value *= k;
+    }
     updateChapter(prog);
     evs.push(...props.update(dt, time, player, env, fx));
     flyers.update(dt, time, player, fx, evs);
@@ -746,8 +825,9 @@ if (saved && CHAPTERS[saved.chapter]) {
     player.teleport(pathX(z), z);
     terrain.prime(player.pos.x, z, 3);
     while (player.glyphs < (saved.glyphs | 0)) player.addGlyph();
-    // shrines already passed have been seen; the companion is met again on the way
+    // shrines already passed have been seen; travelers met before walk with you again
     for (const sh of ruins.shrines) if (sh.z > z) sh.seen = true;
+    group.restore(saved.group, player);
     cam.yaw = 0; cam.ready = false;
     game.chapter = saved.chapter - 1;
     begin();
