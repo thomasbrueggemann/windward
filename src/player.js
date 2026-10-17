@@ -459,6 +459,8 @@ export class Player {
     this.lookTarget = null;  // world point the hood turns toward
     this.push = new THREE.Vector3();   // external wind (m/s) the traveler is pressed by
     this.speedMul = 1;
+    this.slip = 0;           // 0..1 ice underfoot: no grip, slides back down slopes (set by passages)
+    this.rechargeMul = 1;    // scale of the scarf's slow refill on the ground (passages can stop it)
     this.phase = 0;          // walk cycle (radians; one footfall per PI)
     this.strideAmt = 0;      // 0..1 how much the legs are walking
     this.squash = 0; this.squashV = 0;
@@ -553,6 +555,11 @@ export class Player {
       const g = terrainGradient(p.x, p.z);
       const gx = g.x, gz = g.z, s = Math.hypot(gx, gz);
       surfAmt = smooth(0.27, 0.52, s);
+      // ice: even gentle slopes slide; the feet find no grip to dig in
+      const slip = this.slip;
+      if (slip > 0) surfAmt = Math.max(surfAmt, slip * smooth(0.03, 0.3, s));
+      // cliffs (passage walls): too steep to climb, you slide back down
+      const cliff = this.grounded && env && env.cliff && s > 0.8 ? env.cliff(p.x, p.z) * smooth(0.8, 1.25, s) : 0;
       const coldMul = 1 - 0.35 * this.cold;
       let speedTarget = WALK * coldMul * stun * this.speedMul;
       if (this.grounded && wl > 0) {
@@ -642,7 +649,7 @@ export class Player {
       // horizontal
       if (this.grounded) {
         // pressing uphill digs in: the slope barely drags you back, so steep dunes are a slow trudge, not a wall
-        const climb = s > 1e-4 ? wishAmt * clamp((wx * gx + wz * gz) / s, 0, 1) : 0;
+        const climb = (s > 1e-4 ? wishAmt * clamp((wx * gx + wz * gz) / s, 0, 1) : 0) * (1 - 0.85 * slip) * (1 - cliff);
         if (surfAmt > 0) {
           const il = 1 / (s || 1);
           const acc = 28 * surfAmt * (1 - 0.9 * climb);
@@ -652,7 +659,14 @@ export class Player {
         // sliding sand barely brakes; carrying speed onto flatter ground runs out gradually instead of stopping dead
         let k = this.stunned > 0 ? 3 : (wishAmt > 0.05 ? 7.5 : 10) * (1 - 0.93 * surfAmt * (1 - climb));
         k *= 1 - 0.75 * smooth(WALK * 1.15, WALK * 2.6, hs0) * (1 - surfAmt);
-        const tx = wx * speedTarget * wishAmt + this.push.x, tz = wz * speedTarget * wishAmt + this.push.z;
+        k *= 1 - 0.85 * slip;
+        let tx = wx * speedTarget * wishAmt + this.push.x, tz = wz * speedTarget * wishAmt + this.push.z;
+        if (cliff > 0) {
+          // no headway up the face: drop the uphill part of the wish and slide down it
+          const ux = gx / s, uz = gz / s, up = tx * ux + tz * uz;
+          if (up > 0) { tx -= ux * up * cliff; tz -= uz * up * cliff; }
+          v.x -= ux * 24 * cliff * dt; v.z -= uz * 24 * cliff * dt;
+        }
         if (surfAmt > 0.3 && wishAmt > 0.05) {
           // carve: rotate momentum toward the stick instead of braking
           const hs = Math.hypot(v.x, v.z);
@@ -734,7 +748,7 @@ export class Player {
       this.surfing = this.grounded && surfAmt > 0.45 && this.speed > 8;
 
       // recharge
-      if (this.grounded && !this.flying) this.charge = Math.min(1, this.charge + 0.28 * dt * (1 - 0.8 * this.cold));
+      if (this.grounded && !this.flying) this.charge = Math.min(1, this.charge + 0.28 * dt * (1 - 0.8 * this.cold) * this.rechargeMul);
     }
 
     // singing

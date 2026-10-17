@@ -394,6 +394,18 @@ export class AudioEngine {
     const g = ctx.createGain(); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.32 * strength, t + 0.9); g.gain.linearRampToValueAtTime(0, t + 3.4);
     s.connect(f); f.connect(g); g.connect(this.ambBus); s.start(t); s.stop(t + 3.5);
   }
+  /** The wind gathering before a gust in the wind gauntlet: a rising, hollow whistle over a swelling roar. */
+  gustWarn() {
+    if (!this.ready) return; const ctx = this.ctx, t = ctx.currentTime;
+    const o = ctx.createOscillator(); o.type = 'sine';
+    o.frequency.setValueAtTime(420, t); o.frequency.exponentialRampToValueAtTime(980, t + 1.9);
+    const og = ctx.createGain(); og.gain.setValueAtTime(0, t); og.gain.linearRampToValueAtTime(0.05, t + 1.2); og.gain.linearRampToValueAtTime(0, t + 2.1);
+    o.connect(og); og.connect(this.sfxBus); o.start(t); o.stop(t + 2.2);
+    const s = this._noiseSrc(false); const f = ctx.createBiquadFilter(); f.type = 'bandpass'; f.Q.value = 1.6;
+    f.frequency.setValueAtTime(250, t); f.frequency.exponentialRampToValueAtTime(900, t + 2);
+    const g = ctx.createGain(); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.22, t + 1.9); g.gain.linearRampToValueAtTime(0.05, t + 2.3);
+    s.connect(f); f.connect(g); g.connect(this.ambBus); s.start(t); s.stop(t + 2.4);
+  }
   chapter() {
     if (!this.ready) return; const t = this.ctx.currentTime;
     const base = 50 + (this.mood === 2 ? -5 : 0);

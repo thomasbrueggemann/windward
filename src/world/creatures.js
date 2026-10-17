@@ -154,11 +154,26 @@ const N_SEG = 24, SPACING = 1.5;
 const _up = new THREE.Vector3(0, 1, 0), _m = new THREE.Matrix4(), _s = new THREE.Vector3(), _f = new THREE.Vector3(), _r = new THREE.Vector3(), _u = new THREE.Vector3();
 const _rr = new THREE.Vector3(), _uu = new THREE.Vector3(), _down = new THREE.Vector3(0, -1, 0);
 
-/** Ancient stone-and-bronze serpents that hunt the scarf. They are blind to anyone sheltering under stone. */
+/** Shared tuning (the difficulty setting scales it): alert gain, chase speed, beam cone (cos), scarf tear, near-sense radius. */
+export const GUARDIAN_TUNING = { alert: 1, chase: 1, cos: 0.93, tear: 2, near: 13 };
+const BEAM_LEN = 30;
+
+/**
+ * Ancient stone-and-bronze serpents that hunt the scarf. They are blind to anyone sheltering under stone.
+ * opts: route [{x, z}] (patrols it back and forth instead of circling its anchor), sweep (how far the lamp swings
+ * side to side while patrolling), pack (shared array: a guardian that spots you calls the others to search),
+ * height (patrol height). `asleep` guardians lie in the sand with their lamp out.
+ */
 export class Guardian {
-  constructor(scene, ax, az, radius = 45) {
+  constructor(scene, ax, az, radius = 45, opts = {}) {
     this.scene = scene;
     this.anchor = new THREE.Vector3(ax, 0, az); this.radius = radius;
+    this.route = opts.route || null; this.routeI = 0; this.routeDir = 1;
+    this.sweep = opts.sweep ?? 0.5; this.patrolH = opts.height ?? 13; this.patrolSpeed = opts.speed ?? 7;
+    this.pack = opts.pack || null; if (this.pack) this.pack.push(this);
+    this.asleep = false;
+    this.lastSeen = new THREE.Vector3(ax, 0, az);
+    this.spot = new THREE.Vector4();       // where the lamp lights the ground: x, z, radius, alert (for the sand shader)
     this.phase = Math.random() * 6;
     this.state = 'patrol'; this.stateT = 0; this.alert = 0;
     this.pos = Array.from({ length: N_SEG }, (_, i) => new THREE.Vector3(ax + i * SPACING, terrainHeight(ax, az) + 14, az));
@@ -184,7 +199,10 @@ export class Guardian {
     }
     scene.add(this.head);
 
-    const cg = new THREE.CylinderGeometry(0.3, 7.5, 30, 28, 1, true); cg.translate(0, -15, 0);
+    // the visible cone matches the cone it sees with, so the light on the sand is exactly where not to stand
+    const tan = Math.tan(Math.acos(GUARDIAN_TUNING.cos));
+    const cg = new THREE.CylinderGeometry(0.3, BEAM_LEN * tan, BEAM_LEN, 28, 1, true); cg.translate(0, -BEAM_LEN / 2, 0);
+    this._cosBuilt = GUARDIAN_TUNING.cos;
     this.beamMat = new THREE.ShaderMaterial({
       uniforms: { uIntensity: { value: 0.5 }, uColor: { value: new THREE.Color(2.4, 1.8, 0.9) } },
       vertexShader: beamVert, fragmentShader: beamFrag, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
@@ -196,39 +214,91 @@ export class Guardian {
     this._want = new THREE.Vector3();
   }
 
+  /** Called by the pack: someone saw the traveler at `p`; come and look. */
+  alarm(p) {
+    if (this.asleep || this.state === 'chase') return;
+    this.lastSeen.copy(p); this.state = 'search'; this.stateT = 0; this.alert = Math.max(this.alert, 0.5);
+  }
+
+  setAsleep(on) {
+    if (on === this.asleep) return;
+    this.asleep = on;
+    if (on) { this.state = 'patrol'; this.alert = 0; }
+  }
+
+  _rebuildBeam() {
+    const tan = Math.tan(Math.acos(GUARDIAN_TUNING.cos));
+    this.beam.geometry.dispose();
+    const cg = new THREE.CylinderGeometry(0.3, BEAM_LEN * tan, BEAM_LEN, 28, 1, true); cg.translate(0, -BEAM_LEN / 2, 0);
+    this.beam.geometry = cg; this._cosBuilt = GUARDIAN_TUNING.cos;
+  }
+
   update(dt, time, player, fx, ev) {
+    const T = GUARDIAN_TUNING;
+    if (this._cosBuilt !== T.cos) this._rebuildBeam();
     const head = this.pos[0], pp = player.pos;
+    // far away and quietly patrolling: nothing to see, skip the work
+    const far = Math.hypot(pp.x - this.anchor.x, pp.z - this.anchor.z) > 320 && this.state === 'patrol';
+    this.body.visible = this.head.visible = this.beam.visible = !far;
+    this.spot.w = 0;
+    if (far) { this.dist = 999; return; }
     const gy = terrainHeight(head.x, head.z);
     const toP = this._toP.set(pp.x - head.x, pp.y + 1.2 - head.y, pp.z - head.z);
     const dist = toP.length() || 1e-3;
     this.stateT += dt; this.hitCool = Math.max(0, this.hitCool - dt);
-    this.dist = dist;
+    this.dist = this.asleep ? 999 : dist;
 
     // is the traveler inside the lamp's beam?
     const cosA = toP.dot(this.beamDir) / dist;
     const sheltered = player.isSheltered();
-    const inBeam = !sheltered && dist < 40 && cosA > 0.8;
+    const inBeam = !this.asleep && !sheltered && dist < BEAM_LEN + 10 && cosA > T.cos;
+    const near = !this.asleep && !sheltered && dist < T.near;
 
     const target = this._target;
-    let speed = 7;
-    if (this.state === 'patrol') {
-      const a = time * 0.16 + this.phase;
-      target.set(this.anchor.x + Math.cos(a) * this.radius, 0, this.anchor.z + Math.sin(a * 1.4) * this.radius * 0.7);
-      target.y = terrainHeight(target.x, target.z) + 13 + Math.sin(time * 0.7 + this.phase) * 2.5;
-      speed = 7;
-      if (inBeam || (!sheltered && dist < 20)) this.alert += dt * 1.6; else this.alert = Math.max(0, this.alert - dt * 0.5);
-      if (this.alert >= 1) { this.state = 'chase'; this.stateT = 0; ev.push({ type: 'guardian-alert' }); }
+    let speed = this.patrolSpeed;
+    if (this.asleep) {
+      // coiled in the sand, lamp dark
+      target.set(this.anchor.x, terrainHeight(this.anchor.x, this.anchor.z) + 2.2, this.anchor.z);
+      speed = 3;
+    } else if (this.state === 'patrol' || this.state === 'search') {
+      if (this.state === 'search') {
+        // circle where the traveler was last seen, lamp sweeping round
+        const a = this.stateT * 0.9 + this.phase;
+        target.set(this.lastSeen.x + Math.cos(a) * 9, 0, this.lastSeen.z + Math.sin(a) * 9);
+        target.y = terrainHeight(target.x, target.z) + this.patrolH * 0.8;
+        speed = 9 * T.chase;
+        if (this.stateT > 7) { this.state = 'patrol'; this.stateT = 0; }
+      } else if (this.route) {
+        const wp = this.route[this.routeI];
+        target.set(wp.x, 0, wp.z);
+        if (Math.hypot(head.x - wp.x, head.z - wp.z) < 6) {
+          if (this.routeI + this.routeDir < 0 || this.routeI + this.routeDir >= this.route.length) this.routeDir = -this.routeDir;
+          this.routeI += this.routeDir;
+        }
+        target.y = terrainHeight(target.x, target.z) + this.patrolH + Math.sin(time * 0.7 + this.phase) * 1.5;
+      } else {
+        const a = time * 0.16 + this.phase;
+        target.set(this.anchor.x + Math.cos(a) * this.radius, 0, this.anchor.z + Math.sin(a * 1.4) * this.radius * 0.7);
+        target.y = terrainHeight(target.x, target.z) + this.patrolH + Math.sin(time * 0.7 + this.phase) * 2.5;
+      }
+      if (inBeam || near) this.alert += dt * 1.6 * T.alert * (inBeam ? 1 : 0.6) * (this.state === 'search' ? 1.6 : 1);
+      else this.alert = Math.max(0, this.alert - dt * 0.5);
+      if (this.alert >= 1) {
+        this.state = 'chase'; this.stateT = 0; ev.push({ type: 'guardian-alert' });
+        // the others come to look
+        if (this.pack) for (const o of this.pack) if (o !== this && Math.hypot(o.pos[0].x - pp.x, o.pos[0].z - pp.z) < 110) o.alarm(pp);
+      }
     } else if (this.state === 'chase') {
       target.set(pp.x, pp.y + 1.8, pp.z);
-      speed = 11 + Math.min(6, this.stateT * 2);
+      speed = (11 + Math.min(6, this.stateT * 2)) * T.chase;
       if (sheltered) {
         this.alert -= dt * 0.8;
-        if (this.alert < 0.2 || this.stateT > 9) { this.state = 'retreat'; this.stateT = 0; }
-      } else this.alert = 1;
+        if (this.alert < 0.2 || this.stateT > 9) { this.state = 'search'; this.stateT = 0; this.lastSeen.copy(pp); }
+      } else { this.alert = 1; this.lastSeen.copy(pp); }
       if (this.stateT > 12) { this.state = 'retreat'; this.stateT = 0; }
       if (dist < 3.4 && this.hitCool <= 0 && !sheltered) {
         this.hitCool = 3;
-        ev.push({ type: 'guardian-hit', lost: player.tear(3) });
+        ev.push({ type: 'guardian-hit', lost: player.tear(T.tear) });
         this.state = 'retreat'; this.stateT = 0;
         const kb = _f.set(pp.x - head.x, 0, pp.z - head.z).normalize();
         player.vel.x += kb.x * 9; player.vel.z += kb.z * 9; if (!player.grounded) player.vel.y = 3;
@@ -240,7 +310,7 @@ export class Guardian {
       if (this.stateT > 6 && Math.hypot(head.x - this.anchor.x, head.z - this.anchor.z) < this.radius * 1.4) { this.state = 'patrol'; this.stateT = 0; }
       if (this.stateT > 14) { this.state = 'patrol'; this.stateT = 0; }
     }
-    target.y = Math.max(target.y, gy + 5);
+    target.y = Math.max(target.y, gy + (this.asleep ? 1.5 : 5));
 
     // head steering
     const desired = target.sub(head);
@@ -248,7 +318,7 @@ export class Guardian {
     desired.multiplyScalar(speed / dl);
     this.vel.lerp(desired, 1 - Math.exp(-(this.state === 'chase' ? 2.6 : 1.1) * dt));
     head.addScaledVector(this.vel, dt);
-    if (head.y < gy + 3.5) head.y = gy + 3.5;
+    if (head.y < gy + (this.asleep ? 1.2 : 3.5)) head.y = gy + (this.asleep ? 1.2 : 3.5);
 
     // body follows (chain)
     for (let i = 1; i < N_SEG; i++) {
@@ -283,13 +353,37 @@ export class Guardian {
     const sweep = Math.sin(time * 0.8 + this.phase);
     const want = this._want;
     if (this.state === 'chase') want.set(toP.x / dist, toP.y / dist, toP.z / dist);
-    else want.set(hf.x + Math.cos(time * 0.8 + this.phase) * 0.3, -0.95 + sweep * 0.05, hf.z + sweep * 0.5);
+    else if (this.state === 'search') {
+      // the lamp swings round in a wide circle
+      const a = time * 2.1 + this.phase;
+      want.set(Math.cos(a) * 0.75, -0.8, Math.sin(a) * 0.75);
+    } else {
+      // forward and down, swinging side to side across its path
+      const sx = -hf.z, sz = hf.x, sl = Math.hypot(sx, sz) || 1;
+      want.set(hf.x * 0.35 + sx / sl * sweep * this.sweep, -0.9, hf.z * 0.35 + sz / sl * sweep * this.sweep);
+    }
+    if (this.asleep) want.set(hf.x, -0.3, hf.z);
     this.beamDir.lerp(want.normalize(), 1 - Math.exp(-3 * dt)).normalize();
     this.beam.position.copy(head);
     this.beam.quaternion.setFromUnitVectors(_down, this.beamDir);
-    const alertK = this.state === 'chase' ? 1 : this.alert;
+    const alertK = this.state === 'chase' ? 1 : this.state === 'search' ? Math.max(0.45, this.alert) : this.alert;
+    const on = this.asleep ? 0 : 1;
+    this.beam.visible = on > 0;
     this.beamMat.uniforms.uColor.value.setRGB(2.4 + 1.4 * alertK, 1.8 - 0.9 * alertK, 0.9 - 0.6 * alertK);
     this.beamMat.uniforms.uIntensity.value = 0.5 + 0.45 * alertK;
-    this.lampMat.color.setRGB(3.2 + 1.6 * alertK, 2.2 - 1.1 * alertK, 1.0 - 0.6 * alertK);
+    const lamp = 0.15 + 0.85 * on;
+    this.lampMat.color.setRGB((3.2 + 1.6 * alertK) * lamp, (2.2 - 1.1 * alertK) * lamp, (1.0 - 0.6 * alertK) * lamp);
+    // where the cone meets the sand: a few refinement steps along the beam
+    if (on && this.beamDir.y < -0.15) {
+      let t = (head.y - gy) / -this.beamDir.y;
+      for (let k = 0; k < 3; k++) {
+        const x = head.x + this.beamDir.x * t, z = head.z + this.beamDir.z * t;
+        t = Math.max(0, (head.y - terrainHeight(x, z)) / -this.beamDir.y);
+      }
+      if (t < BEAM_LEN + 10) {
+        const tan = Math.tan(Math.acos(T.cos));
+        this.spot.set(head.x + this.beamDir.x * t, head.z + this.beamDir.z * t, Math.max(1.5, t * tan / Math.max(0.35, -this.beamDir.y)), 0.65 + 0.6 * alertK);
+      }
+    }
   }
 }

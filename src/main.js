@@ -24,6 +24,7 @@ import { makeGodRaysPass, makeGradePass } from './post.js';
 import { Group } from './group.js';
 import { Updrafts } from './world/updrafts.js';
 import { flightFx } from './flightfx.js';
+import { Passages } from './world/passages.js';
 
 window.addEventListener('error', (e) => { $('err').textContent += (e.message || e) + '\n'; });
 function $(id) { return document.getElementById(id); }
@@ -103,6 +104,11 @@ const flyers = new Flyers(scene);
 for (const f of PLAN.flyers) flyers.spawn(...onPath(f.p, f.side), f.n);
 const introBanner = props.intro;
 const guardians = PLAN.guardians.map((p) => new Guardian(scene, ...onPath(p), 48));
+// challenge passages (their ground was shaped at import): they add guardians, shelters, cloth and the rules of each test
+const passages = new Passages(scene, { ruins, props, fx });
+passages.adopt(guardians);
+guardians.push(...passages.guardians);
+env.cliff = passages.cliff;
 const group = new Group(scene, { ruins, props });   // the other travelers (spots come from companionSpots(ruins) unless given)
 // flight: wind columns lift whoever passes env; cloth creatures and companions give a ribbon boost when flown close to
 const updrafts = new Updrafts(scene);
@@ -174,15 +180,17 @@ for (let i = 0; i < +(q.get('glyphs') ?? 0); i++) player.addGlyph();
 const game = { state: 'title', time: 0, visionT: 0, visionIdx: 0, hints: {}, singHold: 0, chapter: -1, gust: 0, gustT: 14, gustDir: new THREE.Vector3(), whiteout: 0 };
 
 // ------------------------------------------------------------------ settings (persisted per browser)
-const settings = { sens: 1, invertY: false, volume: 0.85, calm: false };
+const settings = { sens: 1, invertY: false, volume: 0.85, calm: false, difficulty: 'journey' };
 try { Object.assign(settings, JSON.parse(localStorage.getItem('journey-settings') || '{}')); } catch (e) { /* storage unavailable */ }
 function applySettings() {
   cam.sens = settings.sens; cam.invertY = settings.invertY; cam.calm = settings.calm; audio.setVolume && audio.setVolume(settings.volume);
+  passages.setDifficulty(q.get('diff') || settings.difficulty);   // ?diff= tries a level without saving it
+  const note = document.getElementById('diffNote'); if (note) note.textContent = passages.diff.note;
   try { localStorage.setItem('journey-settings', JSON.stringify(settings)); } catch (e) { /* storage unavailable */ }
 }
 applySettings();
 window.__THREE = THREE;
-window.__game = { seed: SEED, sites: SITES, plan: PLAN, hf: { terrainHeight, terrainGradient, pathX }, companion: group.members[0], group, updrafts, player, cam, env, scene, camera, game, terrain, renderer, input, props, guardians, flyers, audio, ruins, summitPoint };
+window.__game = { passages, seed: SEED, sites: SITES, plan: PLAN, hf: { terrainHeight, terrainGradient, pathX }, companion: group.members[0], group, updrafts, player, cam, env, scene, camera, game, terrain, renderer, input, props, guardians, flyers, audio, ruins, summitPoint };
 
 const SAND = new THREE.Color();
 const tmp = new THREE.Vector3();
@@ -375,7 +383,21 @@ function shoutFrom(who) {
 
 // ------------------------------------------------------------------ mountain wind: gusts that push the traveler back down the slope
 function updateGusts(dt, prog) {
-  const cold = smooth(0.78, 0.9, prog);
+  // the wind gauntlet blows in a rhythm you can hear coming (passages.js); elsewhere the gusts come when they will
+  const ov = passages.gust(dt, prog, game.state === 'playing');
+  if (ov) {
+    const k = ov.k, dx = -WIND.x, dz = -WIND.z;
+    game.gust = 0;
+    for (const who of [player, ...group.bodies()]) {
+      if (k <= 0 || !who.group.visible || who.frozen || windShelter(who.pos, dx, dz)) { who.push.set(0, 0, 0); continue; }
+      const m = group.windMul(who);
+      who.push.set(dx * 7.5 * ov.s * k * m, 0, dz * 7.5 * ov.s * k * m);
+      if (!who.grounded) who.vel.y -= 5 * k * m * dt;
+    }
+    cam.shake = Math.max(cam.shake, ov.phase === 'warn' ? 0.1 : 0.45 * k);
+    return k;
+  }
+  const cold = smooth(0.78, 0.9, prog) * passages.gustScale();
   if (cold <= 0 || game.state !== 'playing') { game.gust = Math.max(0, game.gust - dt); for (const who of [player, ...group.bodies()]) who.push.set(0, 0, 0); return 0; }
   game.gustT -= dt;
   if (game.gustT <= 0 && game.gust <= 0) {
@@ -609,6 +631,9 @@ function autoPilot(inp, dt) {
   const lag = group.travellers.some((c) => c.dist > 20 && c.dist < 70);
   let amt = (lag && !w) ? 0 : 1;
   if (w && w.dist < 4) amt = 0;
+  // the challenge passages steer (and jump, and sing) the autopilot through
+  const pa = passages.auto(player, A, dt);
+  if (pa) { if (pa.tx !== undefined) { tx = pa.tx; tz = pa.tz; } if (pa.amt !== undefined) amt = pa.amt; }
   const wx = tx - pp.x, wz = tz - pp.z, wl = Math.hypot(wx, wz) || 1;
   const yaw = cam.yaw, fx = -Math.sin(yaw), fz = -Math.cos(yaw), rx = Math.cos(yaw), rz = -Math.sin(yaw);
   inp.my = (wx * fx + wz * fz) / wl * amt; inp.mx = (wx * rx + wz * rz) / wl * amt;
@@ -618,6 +643,7 @@ function autoPilot(inp, dt) {
   if (amt > 0.5 && moved < 1.0 * dt) A.stuckT += dt; else A.stuckT = Math.max(0, A.stuckT - dt);
   if (A.stuckT > 0.6) { A.jumpT = 0.8; A.stuckT = 0; inp.jumpPressed = true; }
   if (A.jumpT > 0) { A.jumpT -= dt; inp.jump = true; }
+  if (pa) { if (pa.jumpPressed) inp.jumpPressed = true; if (pa.jump) inp.jump = true; if (pa.sing) inp.sing = true; }
   A.singT -= dt;
   if (A.singT < 0) { A.hold = 1.3; A.singT = (w ? 3 : 8) + Math.random() * 4; }
   if (A.hold > 0) { A.hold -= dt; inp.sing = true; }
@@ -661,6 +687,11 @@ function frame(nowMs, doRender = true) {
       if (c.dist < 90) for (const e of c.p.events) if (e.type === 'step' && c.p.grounded) props.addFootprint(e);
     }
     game.whiteout = updateGusts(dt, prog) * (1 - group.thaw);
+    passages.update(dt, { player, group, camera, time, prog, sandU, guardians, playing: game.state === 'playing' });
+    for (const h of passages.hints) showHint(...h);
+    passages.hints.length = 0;
+    for (const e of passages.events) { if (e.type === 'gust-warn') audio.gustWarn && audio.gustWarn(); else if (e.type === 'gust') audio.gust(1.3); }
+    passages.events.length = 0;
     if (group.near > 0 && group.snow > 0.3) showHint('huddle', 'Stay close: huddled together, the wind and cold bite less. Hold a long note — sung together, it parts the storm.', 9000);
     // the thaw: the group's song clears the blizzard around them for a while
     if (group.thaw > 0) {
@@ -823,7 +854,9 @@ function togglePause(force) {
   }
 }
 $('resume').addEventListener('click', () => togglePause(false));
-const sensEl = $('sens'), invEl = $('invert'), volEl = $('volume'), calmEl = $('calm');
+const sensEl = $('sens'), invEl = $('invert'), volEl = $('volume'), calmEl = $('calm'), diffEl = $('difficulty');
+diffEl.value = settings.difficulty;
+diffEl.addEventListener('change', () => { settings.difficulty = diffEl.value; applySettings(); });
 sensEl.value = settings.sens; invEl.checked = settings.invertY; volEl.value = settings.volume; calmEl.checked = settings.calm;
 calmEl.addEventListener('change', () => { settings.calm = calmEl.checked; applySettings(); });
 sensEl.addEventListener('input', () => { settings.sens = +sensEl.value; applySettings(); });

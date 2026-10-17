@@ -27,6 +27,11 @@ uniform float uFogD, uSnow, uCave, uTime, uGlitterGain, uFogTint;
 uniform vec2 uWind;
 uniform vec4 uPools[10];
 uniform vec3 uPoolColor;
+// challenge passages: painted marks (guardian beam spots, shelter glows), ice, the dark flood, sand rivers
+uniform vec4 uMarks[8]; uniform vec3 uMarkCol[8]; uniform int uMarkN;
+uniform vec4 uIce[4]; uniform float uIceRot[4]; uniform int uIceN;
+uniform vec4 uFlood; uniform float uFloodK;
+uniform vec4 uStream[4]; uniform vec2 uStreamDir[4]; uniform int uStreamN;
 varying vec3 vWorld;
 varying vec3 vN;
 varying float vTrench;
@@ -103,6 +108,8 @@ void main(){
   float rockAmt = smoothstep(0.86, 0.58, Ng.y);
   float strata = .5 + .5 * sin(vWorld.y * 0.8 + vnoise(vWorld.xz * 0.05) * 5.);
   vec3 rock = uRock * (0.30 + 0.9 * tone) * (0.85 + 0.25 * strata);
+  // out in the open desert, steep faces are packed sand catching bounce light, not black stone
+  rock = mix(rock, sand * vec3(0.78, 0.66, 0.6) * (0.85 + 0.25 * strata), 0.65 * (1. - uCave) * (1. - uSnow));
   float snowHigh = smoothstep(470., 640., vWorld.y + 45. * vnoise(vWorld.xz * 0.012)) * (1. - 0.75 * rockAmt);
   float snowAmt = max(uSnow * (1. - 0.55 * rockAmt), snowHigh);
   vec3 snow = mix(uSnowCol * vec3(0.36, 0.47, 0.8), uSnowCol * 0.95, smoothstep(0.5, 0.82, mix(dg, d, 0.6)));
@@ -142,6 +149,66 @@ void main(){
     col = col * (1. + pool * 0.6) + uPoolColor * pool * (0.12 + 0.3 * tone) + uPoolColor * g * pool * 3.;
   }
 
+  // --- passages
+  if (uIceN > 0) {
+    for (int i = 0; i < 4; i++) {
+      if (i >= uIceN) break;
+      vec4 ic = uIce[i];
+      vec2 d = vWorld.xz - ic.xy;
+      float cs = cos(uIceRot[i]), sn = sin(uIceRot[i]);
+      vec2 q = vec2(d.x * cs + d.y * sn, -d.x * sn + d.y * cs) / ic.zw;
+      float e = length(q) + (vnoise(vWorld.xz * 0.35) - 0.5) * 0.08;
+      float m = 1. - smoothstep(0.88, 0.97, e);
+      if (m <= 0.) continue;
+      float gl = pow(sat(dot(reflect(-V, Ng), L)), 24.) * 1.4 + pow(1. - sat(dot(Ng, V)), 2.) * 0.35;
+      float crack = smoothstep(0.92, 0.985, vnoise(vWorld.xz * 1.7)) * 0.25;
+      vec3 ice = vec3(0.26, 0.45, 0.74) * (0.42 + 0.4 * tone) + vec3(0.85, 0.93, 1.0) * (gl + crack);
+      col = mix(col, ice, m * 0.9);
+      col += vec3(0.6, 0.85, 1.0) * m * smoothstep(0.80, 0.9, e) * 0.5;   // a bright rim so the edge reads
+    }
+  }
+  if (uFloodK > 0.) {
+    float u = dot(vWorld.xz, uFlood.xy);
+    float inZ = smoothstep(uFlood.z, uFlood.z + 4., u) * (1. - smoothstep(uFlood.w - 4., uFlood.w, u));
+    float dmin = 9.;
+    for (int i = 0; i < 10; i++) { vec4 pl = uPools[i]; if (pl.w <= 0.) continue; dmin = min(dmin, length(vWorld.xz - pl.xy) / pl.z); }
+    float m = inZ * smoothstep(0.45, 0.7, vTrench) * smoothstep(0.8, 0.93, Ng.y) * smoothstep(0.72, 0.92, dmin) * uFloodK;
+    if (m > 0.) {
+      vec2 fl = -uFlood.xy;
+      float s = dot(vWorld.xz, fl) - uTime * 1.6;
+      float w = dot(vWorld.xz, vec2(-fl.y, fl.x));
+      float streak = smoothstep(0.55, 1., vnoise(vec2(s * 0.35, w * 1.6))) * 0.8 + smoothstep(0.6, 1., vnoise(vec2(s * 1.1 + 7., w * 4.)));
+      vec3 flood = (vec3(0.012, 0.016, 0.04) + vec3(0.035, 0.05, 0.1) * streak) * mix(1., 0.5, vTrench * uCave);
+      col = mix(col, flood, m * 0.92);
+    }
+  }
+  if (uStreamN > 0) {
+    for (int i = 0; i < 4; i++) {
+      if (i >= uStreamN) break;
+      vec4 st = uStream[i]; vec2 dir = uStreamDir[i];
+      vec2 d = vWorld.xz - st.xy;
+      float a = dot(d, dir), c = dot(d, vec2(-dir.y, dir.x));
+      float m = (1. - smoothstep(st.z - 6., st.z, abs(a))) * (1. - smoothstep(st.w - 1.2, st.w, abs(c)));
+      if (m <= 0.) continue;
+      float s = a - uTime * 6.;
+      float flow = smoothstep(0.35, 1., vnoise(vec2(s * 0.45, c * 1.3))) + 0.6 * smoothstep(0.5, 1., vnoise(vec2(s * 1.4 + 3., c * 3.)));
+      col = mix(col, col * 1.25 + uPoolColor * 0.22, m * 0.6);
+      col += uPoolColor * flow * m * 0.38;
+    }
+  }
+  if (uMarkN > 0) {
+    for (int i = 0; i < 8; i++) {
+      if (i >= uMarkN) break;
+      vec4 mk = uMarks[i];
+      float d = length(vWorld.xz - mk.xy) / mk.z;
+      if (d > 1.15) continue;
+      float a;
+      if (mk.w > 0.) a = mk.w * (0.22 * smoothstep(1.0, 0.4, d) + 0.75 * smoothstep(0.82, 0.95, d) * smoothstep(1.06, 0.97, d));
+      else a = -mk.w * exp(-d * d * 3.);
+      col += uMarkCol[i] * a;
+    }
+  }
+
   // --- aerial perspective (haze warms toward the sun)
   float fogF = 1. - exp(-pow(dist * uFogD, 2.));
   float sunAmt = pow(sat(dot(-V, L)), 5.);
@@ -164,6 +231,10 @@ export function makeSandUniforms() {
     uFogD: { value: 0.0005 }, uFogTint: { value: 0 }, uSnow: { value: 0 }, uCave: { value: 0 }, uTime: { value: 0 }, uGlitterGain: { value: 1 },
     uWind: { value: new THREE.Vector2(WIND.x, WIND.z) },
     uPools: { value: Array.from({ length: 10 }, () => new THREE.Vector4()) }, uPoolColor: { value: new THREE.Color(1.0, 0.62, 0.28) },
+    uMarks: { value: Array.from({ length: 8 }, () => new THREE.Vector4()) }, uMarkCol: { value: Array.from({ length: 8 }, () => new THREE.Color()) }, uMarkN: { value: 0 },
+    uIce: { value: Array.from({ length: 4 }, () => new THREE.Vector4(0, 0, 1, 1)) }, uIceRot: { value: [0, 0, 0, 0] }, uIceN: { value: 0 },
+    uFlood: { value: new THREE.Vector4() }, uFloodK: { value: 0 },
+    uStream: { value: Array.from({ length: 4 }, () => new THREE.Vector4(0, 0, 1, 1)) }, uStreamDir: { value: Array.from({ length: 4 }, () => new THREE.Vector2(1, 0)) }, uStreamN: { value: 0 },
   };
 }
 
