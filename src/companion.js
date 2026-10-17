@@ -127,7 +127,9 @@ export class Companion {
       if (amt > 0.6 && moved < 1.2 * dt) this.stuckT += dt; else this.stuckT = Math.max(0, this.stuckT - dt);
       if (this.stuckT > 0.8) { inp.jumpPressed = true; inp.jump = true; this.flyHold = 0.6; this.stuckT = 0; this.side = -this.side; }
       // fell hopelessly behind (player surfed or flew away): reappear just out of sight
-      if (this.state === 'travel' && d > 75) this._catchUp(player, camera);
+      if (this.state === 'travel' && d > 48) this._catchUp(player, camera);
+      // hurry when left behind
+      c.speedMul = 1 + clamp((ed - 8) / 18, 0, 0.6);
       if (this.state === 'travel' && prog > LOST_AT) { this.state = 'lost'; ev.push({ type: 'lost' }); }
       if (this.state === 'lost' && d > 38) { this.state = 'gone'; c.setVisible(false); return ev; }
     }

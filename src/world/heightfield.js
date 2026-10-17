@@ -16,11 +16,18 @@ export const lerp = (a, b, t) => a + (b - a) * t;
 export const progressAt = (z) => clamp(-z / PATH_LEN, 0, 1);
 export const zAtProgress = (p) => -p * PATH_LEN;
 
-/** Centre-line of the pilgrimage. */
-export function pathX(z) {
+function basePath(z) {
   const p = progressAt(z);
   const w = 1 - smooth(0.62, 1.0, p);
   return w * (95 * Math.sin(z * 0.0031) + 42 * (Math.sin(z * 0.0087 + 1.3) - Math.sin(1.3)));
+}
+const canyonWiggle = (z) => 22 * Math.sin(z * 0.011) + 10 * Math.sin(z * 0.027 + 2);
+
+/** Centre-line of the pilgrimage (it follows the canyon floor through the depths). */
+export function pathX(z) {
+  const p = progressAt(z);
+  const inCanyon = smooth(0.49, 0.53, p) * (1 - smooth(0.76, 0.82, p));
+  return basePath(z) + canyonWiggle(z) * inCanyon;
 }
 
 // Asymmetric dune profile: gentle windward rise, steep lee fall.
@@ -30,7 +37,8 @@ function trenchEnv(z) {
   const p = progressAt(z);
   return smooth(0.50, 0.545, p) * (1 - smooth(0.70, 0.79, p));
 }
-function trenchCenter(z) { return pathX(z) + 22 * Math.sin(z * 0.011) + 10 * Math.sin(z * 0.027 + 2); }
+function trenchCenter(z) { return basePath(z) + canyonWiggle(z); }
+export { trenchCenter };
 
 /** 0..1: how deep inside the canyon ("the depths") this point is. */
 export function trenchAmount(x, z) {
@@ -83,6 +91,7 @@ function rawHeight(x, z, lod) {
   let ds = 1;
   ds *= 1 - 0.55 * smooth(0.27, 0.33, p) * (1 - smooth(0.50, 0.54, p)); // ruined city sits on calmer ground
   ds *= 1 - 0.4 * env;
+  ds *= 1 - 0.55 * smooth(0.70, 0.735, p) * (1 - smooth(0.80, 0.85, p));   // a walkable ramp out of the depths
   ds *= 1 - 0.3 * smooth(0.74, 0.80, p);
 
   // mountain skirt calms the dunes
@@ -108,7 +117,8 @@ function rawHeight(x, z, lod) {
   const tr = trenchAmount(x, z);
   if (tr > 0) {
     h -= 58 * tr;
-    const wall = 4 * tr * (1 - tr);
+    // rough walls, but keep the floor (where the path runs) smooth enough to walk
+    const wall = 4 * tr * (1 - tr) * smooth(14, 44, Math.abs(x - trenchCenter(z)));
     h += 9 * wall * noise2(x * 0.03 + 3, z * 0.03 - 8);
     if (!lod) h += 2.4 * wall * noise2(x * 0.09, z * 0.09);
   }

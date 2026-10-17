@@ -393,6 +393,7 @@ export class Player {
     this.stunned = 0;
     this.lookTarget = null;  // world point the hood turns toward
     this.push = new THREE.Vector3();   // external wind (m/s) the traveler is pressed by
+    this.speedMul = 1;
     this.phase = 0;          // walk cycle (radians; one footfall per PI)
     this.strideAmt = 0;      // 0..1 how much the legs are walking
     this.squash = 0; this.squashV = 0;
@@ -470,11 +471,11 @@ export class Player {
       const g = terrainGradient(p.x, p.z);
       const gx = g.x, gz = g.z, s = Math.hypot(gx, gz);
       surfAmt = smooth(0.27, 0.52, s);
-      const coldMul = 1 - 0.45 * this.cold;
-      let speedTarget = WALK * coldMul * stun;
+      const coldMul = 1 - 0.35 * this.cold;
+      let speedTarget = WALK * coldMul * stun * this.speedMul;
       if (this.grounded && wl > 0) {
         const uphill = (wx * gx + wz * gz);                // >0 when heading uphill
-        speedTarget *= clamp(1 - 1.0 * Math.max(0, uphill) + 0.35 * Math.max(0, -uphill), 0.32, 1.25);
+        speedTarget *= clamp(1 - 0.8 * Math.max(0, uphill) + 0.35 * Math.max(0, -uphill), 0.4, 1.25);
       }
 
       // jump (with coyote time + input buffering) & flight
@@ -503,14 +504,16 @@ export class Player {
 
       // horizontal
       if (this.grounded) {
+        // pressing uphill digs in: the slope barely drags you back, so steep dunes are a slow trudge, not a wall
+        const climb = s > 1e-4 ? wishAmt * clamp((wx * gx + wz * gz) / s, 0, 1) : 0;
         if (surfAmt > 0) {
           const il = 1 / (s || 1);
-          const acc = 28 * surfAmt;
+          const acc = 28 * surfAmt * (1 - 0.9 * climb);
           v.x += -gx * il * acc * dt; v.z += -gz * il * acc * dt;
         }
         const hs0 = Math.hypot(v.x, v.z);
         // sliding sand barely brakes; carrying speed onto flatter ground runs out gradually instead of stopping dead
-        let k = this.stunned > 0 ? 3 : (wishAmt > 0.05 ? 7.5 : 10) * (1 - 0.93 * surfAmt);
+        let k = this.stunned > 0 ? 3 : (wishAmt > 0.05 ? 7.5 : 10) * (1 - 0.93 * surfAmt * (1 - climb));
         k *= 1 - 0.75 * smooth(WALK * 1.15, WALK * 2.6, hs0) * (1 - surfAmt);
         const tx = wx * speedTarget * wishAmt + this.push.x, tz = wz * speedTarget * wishAmt + this.push.z;
         if (surfAmt > 0.3 && wishAmt > 0.05) {

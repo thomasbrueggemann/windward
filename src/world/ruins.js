@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { rng } from '../noise.js';
-import { addPlaza, terrainHeight, pathX, zAtProgress, PATH_LEN } from './heightfield.js';
+import { addPlaza, terrainHeight, pathX, zAtProgress, PATH_LEN, trenchCenter } from './heightfield.js';
 import { makeStoneBump, makeGlyphSprite } from '../textures.js';
 
 const HDR_AMBER = new THREE.Color(3.4, 1.9, 0.7);
@@ -297,7 +297,7 @@ export class Ruins {
     }
   }
 
-  _canyonCentre(z) { return pathX(z) + 22 * Math.sin(z * 0.011) + 10 * Math.sin(z * 0.027 + 2); }
+  _canyonCentre(z) { return trenchCenter(z); }
 
   // ------------------------------------------------------------ per-frame
   update(sunDir, dusk) {

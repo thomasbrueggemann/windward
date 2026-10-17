@@ -167,7 +167,7 @@ function applySettings() {
 }
 applySettings();
 window.__THREE = THREE;
-window.__game = { hf: { terrainHeight, terrainGradient }, companion, player, cam, env, scene, camera, game, terrain, renderer, input, props, guardians, flyers, audio, ruins, summitPoint };
+window.__game = { hf: { terrainHeight, terrainGradient, pathX }, companion, player, cam, env, scene, camera, game, terrain, renderer, input, props, guardians, flyers, audio, ruins, summitPoint };
 
 const SAND = new THREE.Color();
 const tmp = new THREE.Vector3();
@@ -350,7 +350,7 @@ function updateGusts(dt, prog) {
     const dx = -WIND.x, dz = -WIND.z;
     for (const who of [player, companion.p]) {
       if (!who.group.visible || who.frozen || windShelter(who.pos, dx, dz)) { who.push.set(0, 0, 0); continue; }
-      who.push.set(dx * 8.5 * k, 0, dz * 8.5 * k);
+      who.push.set(dx * 7.5 * k, 0, dz * 7.5 * k);
       if (!who.grounded) who.vel.y -= 5 * k * dt;
     }
     cam.shake = Math.max(cam.shake, 0.4 * k);
@@ -568,8 +568,9 @@ function frame(nowMs, doRender = true) {
     if (game.state === 'end' && !game.endAt) game.endAt = time;
   } else {
     // title screen: the traveler stands on the dune, camera slowly orbits
-    cam.yaw = Math.sin(time * 0.1) * 0.35;
-    cam.update(dt, player, { lookX: 0, lookY: 0 }, time, { dist: 9 });
+    cam.yaw = 0.45 + Math.sin(time * 0.07) * 0.25;
+    cam.pitch = 0.04;
+    cam.update(dt, player, { lookX: 0, lookY: 0 }, time, { dist: 7.5, height: 1.5, noFollow: true });
     player.update(dt, { mx: 0, my: 0, jump: false, jumpPressed: false, sing: false }, cam.yaw, time, env);
     props.update(dt, time, player, env, fx);
     flyers.update(dt, time, player, fx, evs);

@@ -10,8 +10,14 @@
   html, body { margin: 0; height: 100%; overflow: hidden; background: #1a0f0a; font-family: "Avenir Next", "Gill Sans", "Helvetica Neue", Helvetica, Arial, sans-serif; }
   canvas#c { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
   .overlay { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; color: #ffe9c8; transition: opacity 2.2s ease; }
-  #title { background: radial-gradient(ellipse at 50% 58%, rgba(255,170,70,.10), rgba(30,10,6,.80) 78%); z-index: 10; }
-  #title h1 { font-weight: 200; letter-spacing: .62em; margin: 0 0 0 .62em; font-size: clamp(32px, 7vw, 84px); text-shadow: 0 0 40px rgba(255,190,100,.55); }
+  #title { background: radial-gradient(ellipse at 50% 45%, rgba(255,190,110,0) 30%, rgba(40,14,6,.55) 95%); z-index: 10; justify-content: flex-start; padding-top: 13vh; }
+  #title .spacer { flex: 1; }
+  #title .bottom { display: flex; flex-direction: column; align-items: center; padding-bottom: 8vh; }
+  #title h1, #title .sub, #title .bottom { animation: rise 3.2s ease both; }
+  #title .sub { animation-delay: .6s; } #title .bottom { animation-delay: 1.4s; }
+  @keyframes rise { from { opacity: 0; transform: translateY(10px); filter: blur(5px); } to { opacity: 1; transform: none; filter: none; } }
+  #title h1 { font-weight: 200; letter-spacing: .62em; margin: 0 0 0 .62em; font-size: clamp(32px, 7vw, 84px); color: #fffaf0; text-shadow: 0 0 30px rgba(90,35,5,.55), 0 0 3px rgba(90,35,5,.5), 0 0 60px rgba(255,200,120,.4); }
+  #title .sub, #title .bottom { text-shadow: 0 0 12px rgba(90,35,5,.7); }
   #title .sub { margin: 10px 0 44px; letter-spacing: .4em; font-size: 12px; text-transform: uppercase; opacity: .65; }
   #start { appearance: none; background: transparent; color: #ffe9c8; border: 1px solid rgba(255,225,180,.55); padding: 14px 44px; letter-spacing: .5em; font-size: 13px; text-transform: uppercase; cursor: pointer; transition: all .5s; margin-left: .5em; }
   #start:hover:not(:disabled) { background: rgba(255,220,160,.14); box-shadow: 0 0 40px rgba(255,190,100,.35); }
@@ -27,9 +33,9 @@
   #end { z-index: 9; opacity: 0; pointer-events: none; background: transparent; color: #4a2a12; }
   #end h2 { font-weight: 200; letter-spacing: .5em; font-size: clamp(20px, 3.4vw, 40px); margin: 0 0 18px .5em; }
   #end p { font-size: 13px; letter-spacing: .3em; opacity: .7; margin: 6px 0; text-transform: uppercase; }
-  #loading { position: absolute; bottom: 90px; font-size: 11px; letter-spacing: .4em; text-transform: uppercase; opacity: .55; }
+  #loading { margin-top: 18px; font-size: 10px; letter-spacing: .4em; text-transform: uppercase; opacity: .5; }
   #chapter { position: fixed; left: 0; right: 0; top: 18%; text-align: center; color: #fff4e0; z-index: 5; pointer-events: none; opacity: 0;
-    font-weight: 200; font-size: clamp(18px, 2.6vw, 30px); letter-spacing: .55em; text-transform: uppercase; text-shadow: 0 0 30px rgba(255,190,110,.6), 0 1px 10px rgba(60,20,0,.5); }
+    font-weight: 200; font-size: clamp(18px, 2.6vw, 30px); letter-spacing: .55em; text-transform: uppercase; text-shadow: 0 0 24px rgba(70,25,0,.65), 0 0 3px rgba(70,25,0,.6), 0 0 50px rgba(255,190,110,.35); }
   #chapter span { display: block; font-size: .5em; letter-spacing: .8em; opacity: .7; margin-bottom: 12px; }
   #chapter.show { animation: chapter 7.5s ease forwards; }
   @keyframes chapter { 0% { opacity: 0; transform: translateY(8px); filter: blur(6px); } 22% { opacity: 1; transform: none; filter: none; } 70% { opacity: 1; } 100% { opacity: 0; filter: blur(4px); } }
@@ -66,8 +72,11 @@
 <div id="title" class="overlay">
   <h1>JOURNEY</h1>
   <div class="sub">a three.js tribute</div>
-  <button id="start" disabled>Preparing…</button>
-  <div id="loading"></div>
+  <div class="spacer"></div>
+  <div class="bottom">
+    <button id="start" disabled>Preparing…</button>
+    <div id="loading">headphones recommended</div>
+  </div>
   <div class="legal">An unofficial, non-commercial fan homage inspired by thatgamecompany's “Journey” (2012). Not affiliated with or endorsed by thatgamecompany or Sony. All code, art and music here are original and procedurally generated.</div>
 </div>
 <div id="err"></div>
