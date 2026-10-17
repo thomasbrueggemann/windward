@@ -635,7 +635,27 @@ function frame(nowMs, doRender = true) {
   updatePost(time);
   if (doRender) composer.render();
 }
-function loop(t) { frame(t); requestAnimationFrame(loop); }
+// adaptive resolution: drop the render scale when frames run long, recover it once there is headroom again
+const MAX_DPR = Math.min(window.devicePixelRatio, 1.75);
+const quality = { dpr: MAX_DPR, acc: 0, n: 0, last: 0, stable: 0 };
+function adaptResolution(t) {
+  const ft = t - (quality.last || t); quality.last = t;
+  if (ft <= 0 || ft > 100 || document.hidden || game.state === 'paused') return;   // ignore stalls and background tabs
+  quality.acc += ft; quality.n++;
+  if (quality.acc < 1500) return;
+  const avg = quality.acc / quality.n; quality.acc = 0; quality.n = 0;
+  let next = quality.dpr;
+  if (avg > 21 && quality.dpr > 0.7) { next = Math.max(0.7, quality.dpr - 0.15); quality.stable = 0; }
+  else if (avg < 17.6 && quality.dpr < MAX_DPR && ++quality.stable >= 4) { next = Math.min(MAX_DPR, quality.dpr + 0.1); quality.stable = 0; }
+  if (next !== quality.dpr) {
+    quality.dpr = next;
+    renderer.setPixelRatio(next); composer.setPixelRatio(next);
+    renderer.setSize(window.innerWidth, window.innerHeight); composer.setSize(window.innerWidth, window.innerHeight);
+  }
+}
+window.__quality = quality;
+window.__adapt = adaptResolution;
+function loop(t) { adaptResolution(t); frame(t); requestAnimationFrame(loop); }
 requestAnimationFrame(loop);
 // deterministic stepping (used for automated checks when the page is not being animated by the browser)
 window.__advance = (sec, step = 1 / 30) => {
