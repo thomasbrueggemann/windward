@@ -12,7 +12,7 @@
   .overlay { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; color: #ffe9c8; transition: opacity 2.2s ease; }
   #title { background: radial-gradient(ellipse at 50% 45%, rgba(255,190,110,0) 30%, rgba(40,14,6,.55) 95%); z-index: 10; justify-content: flex-start; padding-top: 13vh; }
   #title .spacer { flex: 1; }
-  #title .bottom { display: flex; flex-direction: column; align-items: center; padding-bottom: 8vh; }
+  #title .bottom { display: flex; flex-direction: column; align-items: center; padding-bottom: max(8vh, 104px); }
   #title h1, #title .sub, #title .bottom { animation: rise 3.2s ease both; }
   #title .sub { animation-delay: .6s; } #title .bottom { animation-delay: 1.4s; }
   @keyframes rise { from { opacity: 0; transform: translateY(10px); filter: blur(5px); } to { opacity: 1; transform: none; filter: none; } }
@@ -22,6 +22,9 @@
   #start { appearance: none; background: transparent; color: #ffe9c8; border: 1px solid rgba(255,225,180,.55); padding: 14px 44px; letter-spacing: .5em; font-size: 13px; text-transform: uppercase; cursor: pointer; transition: all .5s; margin-left: .5em; }
   #start:hover:not(:disabled) { background: rgba(255,220,160,.14); box-shadow: 0 0 40px rgba(255,190,100,.35); }
   #start:disabled { opacity: .45; cursor: default; }
+  #continue { appearance: none; background: rgba(255,220,160,.1); color: #ffe9c8; border: 1px solid rgba(255,225,180,.7); padding: 14px 44px; letter-spacing: .5em; font-size: 13px; text-transform: uppercase; cursor: pointer; transition: all .5s; margin: 0 0 14px .5em; }
+  #continue span { display: block; margin-top: 6px; font-size: 10px; letter-spacing: .3em; opacity: .7; }
+  #continue:hover { background: rgba(255,220,160,.2); box-shadow: 0 0 40px rgba(255,190,100,.35); }
   #title .legal { position: absolute; bottom: 22px; left: 0; right: 0; padding: 0 24px; font-size: 11px; line-height: 1.6; opacity: .42; letter-spacing: .08em; }
   #hint { position: fixed; left: 24px; bottom: 20px; color: #fff0d8; font-size: 12px; letter-spacing: .16em; line-height: 1.9; opacity: 0; transition: opacity 2s; pointer-events: none; text-shadow: 0 1px 8px rgba(60,20,0,.7); z-index: 5; }
   #hint b { font-weight: 600; color: #ffd48a; }
@@ -79,6 +82,7 @@
   <div class="sub">a three.js tribute</div>
   <div class="spacer"></div>
   <div class="bottom">
+    <button id="continue" style="display:none"></button>
     <button id="start" disabled>Preparing…</button>
     <div id="loading">headphones recommended</div>
   </div>

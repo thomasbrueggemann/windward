@@ -207,8 +207,15 @@ function updateChapter(prog) {
     el.innerHTML = `<span>${c.n}</span>${c.name}`;
     el.classList.remove('show'); void el.offsetWidth; el.classList.add('show');
     audio.chapter();
+    if (idx > 0) saveProgress({ chapter: idx, glyphs: player.glyphs, met: companion.met });
   }
 }
+
+// ------------------------------------------------------------------ progress (per browser): resume at the last chapter reached
+const SAVE_KEY = 'journey-progress';
+function saveProgress(o) { try { localStorage.setItem(SAVE_KEY, JSON.stringify(o)); } catch (e) { /* storage unavailable */ } }
+function loadProgress() { try { return JSON.parse(localStorage.getItem(SAVE_KEY) || 'null'); } catch (e) { return null; } }
+function clearProgress() { try { localStorage.removeItem(SAVE_KEY); } catch (e) { /* storage unavailable */ } }
 
 function processEvents(evs) {
   for (const e of evs) {
@@ -487,6 +494,7 @@ function updateEnding(dt, time) {
     audio.fadeOut(10);
     if (u >= 1 && game.state === 'ending') {
       game.state = 'end';
+      clearProgress();
       const end = $('end'); end.style.opacity = 1; end.style.pointerEvents = 'auto';
       const found = props.glyphs.filter((g) => g.taken).length;
       $('endStats').textContent = `symbols found  ${found} / ${props.glyphs.length}` + (companion.met ? '  ·  you travelled with a companion' : '');
@@ -722,6 +730,27 @@ invEl.addEventListener('change', () => { settings.invertY = invEl.checked; apply
 volEl.addEventListener('input', () => { settings.volume = +volEl.value; applySettings(); });
 // losing pointer lock mid-game (Esc) opens the menu
 document.addEventListener('pointerlockchange', () => { if (!document.pointerLockElement && game.state === 'playing' && input.lockedOnce) togglePause(true); });
-startBtn.addEventListener('click', begin);
+startBtn.addEventListener('click', () => { if (game.state === 'title' && loadProgress()) clearProgress(); begin(); });
+// a journey left unfinished can be resumed from the start of the chapter it reached
+const saved = q.has('p') || q.has('auto') ? null : loadProgress();
+if (saved && CHAPTERS[saved.chapter]) {
+  const cont = $('continue');
+  cont.style.display = '';
+  cont.innerHTML = `Continue <span>${CHAPTERS[saved.chapter].n} · ${CHAPTERS[saved.chapter].name}</span>`;
+  startBtn.textContent = 'New journey';
+  cont.addEventListener('click', () => {
+    if (game.state !== 'title') return;
+    const z = zAtProgress(CHAPTERS[saved.chapter].p + 0.004);
+    player.heading = Math.PI;
+    player.teleport(pathX(z), z);
+    terrain.prime(player.pos.x, z, 3);
+    while (player.glyphs < (saved.glyphs | 0)) player.addGlyph();
+    // shrines already passed have been seen; the companion is met again on the way
+    for (const sh of ruins.shrines) if (sh.z > z) sh.seen = true;
+    cam.yaw = 0; cam.ready = false;
+    game.chapter = saved.chapter - 1;
+    begin();
+  });
+}
 window.addEventListener('keydown', (e) => { if (game.state === 'title' && (e.code === 'Enter' || e.code === 'Space')) begin(); });
 if (q.has('auto')) begin();
