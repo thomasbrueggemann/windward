@@ -61,7 +61,7 @@ export class Flyers {
       this.scene.add(mesh);
       this.list.push({
         mesh, mat, vel: new THREE.Vector3(r() - .5, 0, r() - .5), home: new THREE.Vector3(x, 0, z), phase: r() * 10,
-        orbitR: 4 + r() * 4, orbitSpeed: (0.4 + r() * 0.5) * (r() < 0.5 ? -1 : 1), orbitA: r() * 6.28, height: 2.2 + r() * 3.4,
+        orbitR: 9 + r() * 6, orbitSpeed: (0.3 + r() * 0.35) * (r() < 0.5 ? -1 : 1), orbitA: r() * 6.28, height: 5 + r() * 4,
         glow: 0.1, bank: 0, fwd: new THREE.Vector3(0, 0, 1),
       });
     }
@@ -69,24 +69,37 @@ export class Flyers {
 
   update(dt, time, player, fx, ev) {
     const pp = player.pos;
+    // only the two closest flyers escort the traveler; the rest keep to their own patch of sky, so the view stays clear
+    const esc = this._esc || (this._esc = new Set());
+    esc.clear();
+    let a = null, b = null, da = 60, db = 60;
     for (const f of this.list) {
+      const d = Math.hypot(pp.x - f.mesh.position.x, pp.z - f.mesh.position.z) * (f.escort ? 0.8 : 1);   // hysteresis
+      if (d < da) { b = a; db = da; a = f; da = d; } else if (d < db) { b = f; db = d; }
+    }
+    if (a) esc.add(a); if (b) esc.add(b);
+    // escorts circle a point ahead of the traveler, out of the camera's line of sight
+    const off = 7 * (1 - player.sing), ox = pp.x + Math.sin(player.heading) * off, oz = pp.z + Math.cos(player.heading) * off;
+    for (const f of this.list) {
+      f.escort = esc.has(f);
       const m = f.mesh, p = m.position;
       const dx = pp.x - p.x, dz = pp.z - p.z;
       const dp = Math.hypot(dx, dz);
       if (dp > 260) { m.visible = false; continue; }
       m.visible = true;
       f.mat.uniforms.uTime = clothUniforms.uTime;
-      const near = dp < 60;
+      const near = f.escort;
       let tx, ty, tz;
       if (near) {
+        // singing calls them in close enough to touch (and recharge the scarf)
         f.orbitA += f.orbitSpeed * dt * (1 + player.sing * 1.5);
-        const rad = f.orbitR * (1 - 0.3 * player.sing);
-        tx = pp.x + Math.cos(f.orbitA) * rad; tz = pp.z + Math.sin(f.orbitA) * rad;
-        ty = pp.y + f.height + Math.sin(time * 0.9 + f.phase) * 1.0;
+        const rad = f.orbitR * (1 - 0.55 * player.sing);
+        tx = ox + Math.cos(f.orbitA) * rad; tz = oz + Math.sin(f.orbitA) * rad;
+        ty = pp.y + f.height * (1 - 0.6 * player.sing) + Math.sin(time * 0.9 + f.phase) * 1.0;
       } else {
         const a = time * 0.12 + f.phase;
         tx = f.home.x + Math.cos(a) * 28; tz = f.home.z + Math.sin(a * 1.3) * 22;
-        ty = terrainHeight(tx, tz) + 5 + Math.sin(time * 0.5 + f.phase) * 1.5;
+        ty = terrainHeight(tx, tz) + 9 + Math.sin(time * 0.5 + f.phase) * 2;
       }
       ty = Math.max(ty, terrainHeight(p.x, p.z) + 1.6);
       // steer
@@ -108,7 +121,7 @@ export class Flyers {
       // glow / interaction
       const d3 = Math.hypot(dp, p.y - pp.y - 1);
       let gT = 0.15 + (near ? 0.25 : 0);
-      if (d3 < 7) {
+      if (d3 < 8) {
         gT = 1;
         if (player.charge < 1 && !player.frozen) { player.charge = Math.min(1, player.charge + 1.6 * dt); ev.push({ type: 'recharge' }); }
       }
