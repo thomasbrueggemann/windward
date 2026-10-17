@@ -1,10 +1,42 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { addPlaza, terrainHeight, pathX, zAtProgress, progressAt, trenchCenter } from './heightfield.js';
 import { rngFor, mulberry32, range, sign, pick } from './seed.js';
 import { PLAN, CORRIDOR, addSite, occupy, isFree, onPath } from './layout.js';
-import { makeStoneBump, makeGlyphSprite } from '../textures.js';
+import { makeGlyphSprite } from '../textures.js';
+import { palette } from './palette.js';
+import { chunk, shaft, column, finishExtrude, weather, patchStone, stoneNoise, updateStone, dress } from './stone.js';
 
 const HDR_AMBER = new THREE.Color(3.4, 1.9, 0.7);
+
+const SHADOW_VERT = /* glsl */`
+uniform vec4 uRow; varying float vH;
+#include <fog_pars_vertex>
+void main() { vH = dot(uRow, vec4(position, 1.)); vec4 mvPosition = modelViewMatrix * vec4(position, 1.); gl_Position = projectionMatrix * mvPosition;
+#include <fog_vertex>
+}`;
+const SHADOW_FRAG = /* glsl */`
+uniform vec3 uCol; uniform float uOp; varying float vH;
+#include <fog_pars_fragment>
+void main() { gl_FragColor = vec4(uCol, uOp * mix(1., 0.42, smoothstep(0., 16., vH)));
+#include <fog_fragment>
+}`;
+const DECAL_VERT = /* glsl */`
+attribute vec4 iSize; varying vec2 vP; varying vec4 vS;
+#include <fog_pars_vertex>
+void main() { vS = iSize; vP = position.xz * 2. * (iSize.xy + iSize.z); vec4 mvPosition = modelViewMatrix * instanceMatrix * vec4(position, 1.); gl_Position = projectionMatrix * mvPosition;
+#include <fog_vertex>
+}`;
+const DECAL_FRAG = /* glsl */`
+uniform vec3 uCol; uniform float uOp; varying vec2 vP; varying vec4 vS;
+#include <fog_pars_fragment>
+void main() {
+  vec2 q = abs(vP) - vS.xy + vS.w;
+  float d = length(max(q, 0.)) + min(max(q.x, q.y), 0.) - vS.w;
+  float a = 1. - smoothstep(0., vS.z, d); a *= a;
+  gl_FragColor = vec4(uCol, a * uOp);
+#include <fog_fragment>
+}`;
 
 /** Ruined city, shrines, buried monoliths and the canyon's rock bridges. */
 export class Ruins {
@@ -18,51 +50,72 @@ export class Ruins {
     this.posts = [];            // banner post pairs
     this.casters = [];
     this.windowMats = [];
-    const bump = makeStoneBump(); bump.repeat.set(2, 2);
-    this.stone = new THREE.MeshStandardMaterial({ color: 0xd9b98c, roughness: 0.96, metalness: 0, bumpMap: bump, bumpScale: 2.2, emissive: 0x4a2a14, emissiveIntensity: 0.55 });
-    this.stoneDark = new THREE.MeshStandardMaterial({ color: 0xb08a62, roughness: 0.96, bumpMap: bump, bumpScale: 2.0, emissive: 0x3a2010, emissiveIntensity: 0.55 });
-    this.gold = new THREE.MeshStandardMaterial({ color: 0xe8b860, roughness: 0.5, metalness: 0.5, emissive: 0x6a3a08, emissiveIntensity: 0.8 });
-    this.rock = new THREE.MeshStandardMaterial({ color: 0x24364a, roughness: 1, bumpMap: bump, bumpScale: 3, emissive: 0x06101c, emissiveIntensity: 1 });
-    this.shadowMat = new THREE.MeshBasicMaterial({ color: 0x30101a, transparent: true, opacity: 0.5, depthWrite: false, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3, fog: false });
+    this.decals = [];
+    stoneNoise();
+    const std = (o) => new THREE.MeshStandardMaterial({ roughness: 0.96, metalness: 0, ...o });
+    this.stone = patchStone(std({ color: 0xd9b98c, emissive: 0x4a2a14, emissiveIntensity: 0.55 }), 'a', { dust: 1.25 });
+    this.stoneDark = patchStone(std({ color: 0xb08a62, emissive: 0x3a2010, emissiveIntensity: 0.55 }), 'b', { dust: 1.25 });
+    this.gold = new THREE.MeshStandardMaterial({ color: 0xe8b860, roughness: 0.4, metalness: 0.65, emissive: 0x6a3a08, emissiveIntensity: 0.8 });
+    this.rock = patchStone(std({ color: 0x2c4258, roughness: 1, emissive: 0x06101c, emissiveIntensity: 1 }), 'r', { p: [0.9, 0.55, 0, 0.6], dust: 2.0, glowMul: 0 });
+    this.stoneMats = [this.stone, this.stoneDark, this.rock];
+    this.shadowU = { uCol: { value: new THREE.Color(0x30101a) }, uOp: { value: 0.5 } };
+    this.decalU = { uCol: { value: new THREE.Color(0x30101a) }, uOp: { value: 0.55 } };
     this._tmp = new THREE.Matrix4();
     this._S = new THREE.Matrix4();
     this._lastSun = new THREE.Vector3(9, 9, 9);
     this.glyphTex = makeGlyphSprite(0);
+    this.rv = mulberry32(4711);   // visual-only randomness: never touches the layout stream
 
     this.r = rngFor('ruins');
     this.build();
   }
 
   // ------------------------------------------------------------ helpers
-  _place(mesh, x, y, z, rotY = 0, shadowY = null) {
+  _shadowMat(mesh, y0) {
+    const e = mesh.matrixWorld.elements;
+    return new THREE.ShaderMaterial({
+      uniforms: { ...THREE.UniformsUtils.clone(THREE.UniformsLib.fog), uRow: { value: new THREE.Vector4(e[1], e[5], e[9], e[13] - y0) }, ...this.shadowU },
+      vertexShader: SHADOW_VERT, fragmentShader: SHADOW_FRAG, transparent: true, depthWrite: false, side: THREE.DoubleSide, fog: true,
+      polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3,
+    });
+  }
+  /** opt: band (local y of the carved frieze), sg (cheap shadow geometry), contact [hx, hz, margin, strength, corner] */
+  _place(mesh, x, y, z, rotY = 0, shadowY = null, opt = {}) {
     mesh.position.set(x, y, z);
     mesh.rotation.y = rotY;
     this.group.add(mesh);
     mesh.updateMatrixWorld(true);
+    if (mesh.material.userData.stone && !mesh.geometry.attributes.aInfo) dress(mesh, shadowY ?? terrainHeight(x, z), opt.band !== undefined ? y + opt.band : 0);
+    const sg = opt.sg ?? mesh.userData.sg;
     if (shadowY !== null) {
-      const sh = new THREE.Mesh(mesh.geometry, this.shadowMat);
+      const sh = new THREE.Mesh(sg || mesh.geometry, this._shadowMat(mesh, shadowY));
       sh.matrixAutoUpdate = false; sh.frustumCulled = false; sh.renderOrder = 2;
       this.scene.add(sh);
       this.casters.push({ mesh, sh, y0: shadowY });
     }
+    if (opt.contact) this._contact(x, z, rotY, ...opt.contact);
     return mesh;
   }
+  _contact(x, z, rot, hx, hz, m = 1.6, k = 0.55, rad = 0.3) { this.decals.push({ x, z, rot, hx, hz, m, k, rad, y: terrainHeight(x, z) + 0.05 }); }
   _solid(c) { this.colliders.push(c); occupy(c.x, c.z, c.r ?? Math.hypot(c.hx, c.hz)); }
-  _box(w, h, d, mat = this.stone) { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); return m; }
+  /** Weathered block with its base at local y = `yo` (default: centred). A plain box doubles as the planar-shadow caster. */
+  _box(w, h, d, mat = this.stone, yo = 0, o = {}) {
+    const g = chunk(w, h, d, { seed: this.rv() * 50, ...o }).translate(0, yo, 0);
+    const m = new THREE.Mesh(g, mat);
+    m.userData.sg = new THREE.BoxGeometry(w, h, d).translate(0, yo, 0);
+    return m;
+  }
+  _blk(w, h, d, mat = this.stone, o = {}) { return this._box(w, h, d, mat, h / 2, o); }
 
   _column(x, z, y0, h, broken = false) {
     const H = broken ? h * (0.35 + this.r() * 0.35) : h;
-    const base = this._box(2.6, 0.7, 2.6); base.geometry.translate(0, 0.35, 0);
-    this._place(base, x, y0 - 0.2, z, 0, y0);
-    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.85, 1.02, H, 14), this.stone);
-    shaft.geometry.translate(0, H / 2, 0);
-    this._place(shaft, x, y0 + 0.4, z, 0, y0);
-    if (!broken) {
-      const cap = this._box(2.5, 0.8, 2.5); cap.geometry.translate(0, 0.4, 0);
-      this._place(cap, x, y0 + 0.4 + H, z, 0.2, y0);
-    } else {
+    const g = column(H, { broken, seed: this.rv() * 40 });
+    const m = new THREE.Mesh(g, this.stone);
+    m.userData.sg = mergeGeometries([new THREE.BoxGeometry(2.6, 0.7, 2.6).translate(0, 0.35, 0), new THREE.CylinderGeometry(0.85, 1.02, H, 8).translate(0, 0.6 + H / 2, 0)]);
+    this._place(m, x, y0 - 0.2, z, 0, y0, { band: broken || this.rv() < 0.4 ? undefined : 0.6 + H - 1.5, contact: [1.35, 1.35, 1.7, 0.5, 1.3] });
+    if (broken) {
       // a fallen drum lying in the sand beside the stump
-      const drum = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, 2.2, 12), this.stone);
+      const drum = dress(new THREE.Mesh(shaft(0.9, 0.9, 2.2, { radial: 24, hseg: 4, flutes: 9, jag: 0.25, seed: this.rv() * 9 }), this.stone), y0);
       drum.rotation.z = Math.PI / 2;
       drum.position.set(x + 2.6 + this.r() * 2, y0 + 0.7, z + (this.r() - .5) * 4);
       this.group.add(drum);
@@ -71,15 +124,15 @@ export class Ruins {
   }
 
   _wall(x, z, y0, len, h, rot) {
-    const w = this._box(len, h, 1.4, this.stoneDark); w.geometry.translate(0, h / 2, 0);
-    this._place(w, x, y0 - 0.2, z, rot, y0);
+    const w = this._blk(len, h, 1.4, this.stoneDark, { chip: 2, r: 0.18 });
+    this._place(w, x, y0 - 0.2, z, rot, y0, { contact: [len / 2, 0.7, 1.4, 0.5, 0.3] });
     // ragged top
     const n = 3;
     for (let i = 0; i < n; i++) {
       const sh = h * (0.2 + this.r() * 0.35), sw = len / n * 0.6;
-      const b = this._box(sw, sh, 1.2, this.stoneDark); b.geometry.translate(0, sh / 2, 0);
+      const b = this._blk(sw, sh, 1.2, this.stoneDark, { chip: 2.5, r: 0.16 });
       const off = (i - (n - 1) / 2) * (len / n);
-      this._place(b, x + Math.cos(rot) * off, y0 - 0.2 + h, z - Math.sin(rot) * off, rot, y0);
+      this._place(b, x + Math.cos(rot) * off, y0 - 0.2 + h - 0.15, z - Math.sin(rot) * off, rot, y0);
     }
     this._solid({ kind: 'box', x, z, hx: len / 2, hz: 0.7, rot: -rot, top: y0 + h });
   }
@@ -88,16 +141,20 @@ export class Ruins {
     const parts = [[7.2, h * 0.52, 7.2], [5.4, h * 0.3, 5.4], [3.8, h * 0.18, 3.8]];
     let y = y0 - 0.3;
     parts.forEach(([w, hh, d], i) => {
-      const b = this._box(w, hh, d); b.geometry.translate(0, hh / 2, 0);
-      this._place(b, x, y, z, rot, y0);
+      const gs = [chunk(w, hh, d, { seed: this.rv() * 40 }).translate(0, hh / 2, 0),
+        chunk(w + 0.9, 0.5, d + 0.9, { r: 0.14, seed: this.rv() * 40 }).translate(0, hh - 0.1, 0),
+        chunk(w + 0.6, 0.6, d + 0.6, { r: 0.16, seed: this.rv() * 40 }).translate(0, 0.2, 0)];
+      const b = new THREE.Mesh(mergeGeometries(gs, false), this.stone);
+      b.userData.sg = new THREE.BoxGeometry(w, hh, d).translate(0, hh / 2, 0);
+      this._place(b, x, y, z, rot, y0, { band: hh * 0.78 - 1.05 + 0.4, contact: i ? undefined : [w / 2 + 0.4, d / 2 + 0.4, 2.2, 0.55, 0.5] });
       // glowing windows (dusk lights)
       const wm = new THREE.MeshBasicMaterial({ color: HDR_AMBER.clone().multiplyScalar(0.0) });
       this.windowMats.push(wm);
       for (const sgn of [-1, 1]) {
         const win = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 1.6), wm);
-        win.position.set(sgn * w * 0.18, hh * 0.55, d / 2 + 0.03);
+        win.position.set(sgn * w * 0.18, hh * 0.45, d / 2 + 0.22);
         b.add(win);
-        const win2 = win.clone(); win2.position.set(w / 2 + 0.03, hh * 0.55, sgn * d * 0.18); win2.rotation.y = Math.PI / 2; b.add(win2);
+        const win2 = win.clone(); win2.position.set(w / 2 + 0.22, hh * 0.45, sgn * d * 0.18); win2.rotation.y = Math.PI / 2; b.add(win2);
       }
       y += hh;
     });
@@ -111,20 +168,24 @@ export class Ruins {
     const W = 8 * s, H = 17 * s, w = 4.2 * s, hh = 11 * s;
     sh.moveTo(-W, 0); sh.lineTo(-W, H - W); sh.absarc(0, H - W, W, Math.PI, 0, true); sh.lineTo(W, 0); sh.lineTo(w, 0);
     sh.lineTo(w, hh - w); sh.absarc(0, hh - w, w, 0, Math.PI, false); sh.lineTo(-w, 0); sh.closePath();
-    const geo = new THREE.ExtrudeGeometry(sh, { depth: 2.6 * s, bevelEnabled: false, curveSegments: 18 });
-    geo.translate(0, 0, -1.3 * s);
-    const m = new THREE.Mesh(geo, this.stone);
-    this._place(m, x, y0 - 0.2, z, rot, y0);
+    const bv = 0.3 * s, dp = 2.6 * s - 2 * bv;
+    const geo = new THREE.ExtrudeGeometry(sh, { depth: dp, bevelEnabled: true, bevelSize: bv, bevelThickness: bv, bevelOffset: -bv, bevelSegments: 2, curveSegments: 18, steps: 1 });
+    geo.translate(0, 0, -dp / 2);
+    const m = new THREE.Mesh(finishExtrude(weather(geo, 0.2 * s, 0.45, this.rv() * 30)), this.stone);
+    m.userData.sg = new THREE.ExtrudeGeometry(sh, { depth: 2.6 * s, bevelEnabled: false, curveSegments: 10 }).translate(0, 0, -1.3 * s);
+    this._place(m, x, y0 - 0.2, z, rot, y0, { band: H * 0.3 });
     for (const sgn of [-1, 1]) {
       const lx = sgn * (W + w) / 2;
-      this._solid({ kind: 'box', x: x + Math.cos(rot) * lx, z: z - Math.sin(rot) * lx, hx: (W - w) / 2, hz: 1.4 * s, rot: -rot, top: y0 + H });
+      const cx = x + Math.cos(rot) * lx, cz = z - Math.sin(rot) * lx;
+      this._contact(cx, cz, rot, (W - w) / 2 + 0.2, 1.5 * s, 2, 0.5, 0.4);
+      this._solid({ kind: 'box', x: cx, z: cz, hx: (W - w) / 2, hz: 1.4 * s, rot: -rot, top: y0 + H });
     }
   }
 
   _hall(x, z, y0, rot) {
     // roofed colonnade — shelter from the guardians
-    const roof = this._box(26, 1.6, 18); roof.geometry.translate(0, 0.8, 0);
-    this._place(roof, x, y0 + 11.5, z, rot, y0);
+    const roof = this._blk(26, 1.6, 18, this.stone, { r: 0.3 });
+    this._place(roof, x, y0 + 11.5, z, rot, y0, { band: 0.3 });
     const cs = Math.cos(rot), sn = Math.sin(rot);
     for (const [lx, lz] of [[-10, -6], [-10, 6], [10, -6], [10, 6], [0, -6], [0, 6]]) {
       this._column(x + cs * lx + sn * lz, z - sn * lx + cs * lz, y0, 11.4, false);
@@ -135,8 +196,8 @@ export class Ruins {
   _ziggurat(x, z, y0, rot) {
     let y = y0 - 0.3;
     [[34, 3.2], [27, 3.2], [20, 3.2], [13, 3.2]].forEach(([w, h], i) => {
-      const b = this._box(w, h, w * 0.85, i % 2 ? this.stoneDark : this.stone); b.geometry.translate(0, h / 2, 0);
-      this._place(b, x, y, z, rot, y0);
+      const b = this._blk(w, h, w * 0.85, i % 2 ? this.stoneDark : this.stone, { r: 0.35, chip: 1.4 });
+      this._place(b, x, y, z, rot, y0, { band: 1.85, contact: i ? undefined : [w / 2 + 0.4, w * 0.425 + 0.4, 3.4, 0.55, 0.6] });
       y += h;
     });
     const door = new THREE.Mesh(new THREE.PlaneGeometry(5, 8), new THREE.MeshBasicMaterial({ color: 0x1a0a08 }));
@@ -152,8 +213,8 @@ export class Ruins {
     for (const sgn of [-1, 1]) {
       const px = cx + spanDir.x * span / 2 * sgn, pz = cz + spanDir.z * span / 2 * sgn;
       const y = terrainHeight(px, pz);
-      const p = this._box(1.5, h, 1.5); p.geometry.translate(0, h / 2, 0);
-      this._place(p, px, y - 0.4, pz, rot, y);
+      const p = this._blk(1.5, h, 1.5, this.stone, { r: 0.14 });
+      this._place(p, px, y - 0.4, pz, rot, y, { band: 3.2, contact: [0.8, 0.8, 1.3, 0.5, 0.4] });
       const cap = new THREE.Mesh(new THREE.ConeGeometry(1.4, 2.6, 4), this.gold); cap.geometry.translate(0, 1.3, 0);
       this._place(cap, px, y - 0.4 + h, pz, rot + Math.PI / 4, y);
       this._solid({ kind: 'circle', x: px, z: pz, r: 1.1, top: y + h });
@@ -166,12 +227,12 @@ export class Ruins {
   _shrine(x, z) {
     const pl = addPlaza(x, z, 12, 34);
     const y0 = pl.h;
-    const plat = new THREE.Mesh(new THREE.CylinderGeometry(7.5, 8.6, 1.0, 8), this.stone); plat.geometry.translate(0, 0.5, 0);
-    this._place(plat, x, y0 - 0.2, z, 0.2, y0);
-    const step = new THREE.Mesh(new THREE.CylinderGeometry(5.2, 6.2, 1.0, 8), this.stoneDark); step.geometry.translate(0, 0.5, 0);
+    const plat = new THREE.Mesh(shaft(7.5, 8.6, 1.0, { radial: 32, hseg: 2, flutes: 0, poly: 8, wob: 0.02, seed: 3 }).translate(0, 0.5, 0), this.stone);
+    this._place(plat, x, y0 - 0.2, z, 0.2, y0, { contact: [8.6, 8.6, 3.4, 0.55, 8.6] });
+    const step = new THREE.Mesh(shaft(5.2, 6.2, 1.0, { radial: 32, hseg: 2, flutes: 0, poly: 8, wob: 0.02, seed: 4 }).translate(0, 0.5, 0), this.stoneDark);
     this._place(step, x, y0 + 0.8, z, 0.2, y0);
-    const ob = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.9, 11, 4), this.stone); ob.geometry.translate(0, 5.5, 0);
-    this._place(ob, x, y0 + 1.7, z, 0.8, y0);
+    const ob = new THREE.Mesh(shaft(1.2, 1.9, 11, { radial: 32, hseg: 14, flutes: 0, poly: 4, wob: 0.05, seed: 5 }).translate(0, 5.5, 0), this.stone);
+    this._place(ob, x, y0 + 1.7, z, 0.8, y0, { band: 2.4 });
     const tip = new THREE.Mesh(new THREE.ConeGeometry(1.2, 2.2, 4), this.gold); tip.geometry.translate(0, 1.1, 0);
     this._place(tip, x, y0 + 12.7, z, 0.8, y0);
     // glowing glyph panel
@@ -204,13 +265,12 @@ export class Ruins {
       const n = Math.sin(px * 0.31 + pz * 0.9) + Math.sin(py * 0.7 + px * 0.13) * 0.8 + Math.sin(pz * 1.7 + py * 0.4);
       p.setXYZ(i, px + n * 0.45, py + n * 0.55, pz + n * 0.5);
     }
-    geo.computeVertexNormals();
-    const m = new THREE.Mesh(geo, this.rock);
+    const m = dress(new THREE.Mesh(finishExtrude(geo), this.rock), -999);
     this._place(m, x, y, z, rot);
     this.shelters.push({ x, z, hx: 44, hz: d / 2 + 2, y: y - t / 2 + 2 });
     for (let i = 0; i < 5; i++) {
       const hs = 4 + this.r() * 9;
-      const c = new THREE.Mesh(new THREE.ConeGeometry(1.1 + this.r() * 1.5, hs, 6), this.rock);
+      const c = dress(new THREE.Mesh(shaft(1.1 + this.r() * 1.5, 0.12, hs, { radial: 10, hseg: 5, flutes: 0, wob: 0.25, seed: i }), this.rock), -999);
       c.rotation.x = Math.PI; c.position.set(x + (this.r() - .5) * w * 0.5, y - t / 2 - hs / 2 + 1.5, z + (this.r() - .5) * d * 0.6);
       this.group.add(c);
     }
@@ -235,11 +295,12 @@ export class Ruins {
       const y = terrainHeight(x, z);
       const h = 5 + r() * 9;
       let m;
-      if (kind === 0) { m = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 1.1, h, 10), this.stone); m.geometry.translate(0, h / 2, 0); }
-      else if (kind === 1) { m = this._box(2 + r() * 2, h, 1.2); m.geometry.translate(0, h / 2, 0); }
-      else { m = this._box(6 + r() * 4, 1.4, 3 + r() * 2); m.geometry.translate(0, 0.7, 0); }
+      if (kind === 0) { m = new THREE.Mesh(shaft(0.9, 1.1, h, { radial: 20, hseg: 8, flutes: 0, wob: 0.14, jag: 0.5, seed: this.rv() * 9 }).translate(0, h / 2, 0), this.stone); }
+      else if (kind === 1) { m = this._blk(2 + r() * 2, h, 1.2, this.stone, { chip: 2.5 }); }
+      else { m = this._blk(6 + r() * 4, 1.4, 3 + r() * 2, this.stone, { chip: 2 }); }
       m.rotation.set((r() - .5) * 0.3, r() * 6.28, (r() - .5) * 0.35);
       m.position.set(x, y - 1.6 - r() * 2, z);
+      dress(m, y);
       this.group.add(m);
       this._solid({ kind: 'circle', x, z, r: kind === 2 ? 2.8 : 1.1, top: y + (kind === 2 ? 0 : h * 0.7) });
       addSite('monolith', x, z, { y, r: 3 });
@@ -255,10 +316,10 @@ export class Ruins {
     // the first landmark: a standing gateway right ahead of the spawn point
     {
       const g = PLAN.gateway, z = g.z, x = pathX(z) + g.dx, y = terrainHeight(x, z), rot = g.rot;
-      const lintel = this._box(14, 2.2, 2.4); lintel.geometry.translate(0, 1.1, 0);
-      this._place(lintel, x, y + 10.5, z, rot);
+      const lintel = this._blk(14, 2.2, 2.4, this.stone, { r: 0.3 });
+      this._place(lintel, x, y + 10.5, z, rot, null, { band: 0.6 });
       for (const sx of [-6, 6]) {
-        const col = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.3, 14, 12), this.stone); col.geometry.translate(0, 7, 0);
+        const col = new THREE.Mesh(shaft(1.1, 1.3, 14, { radial: 36, hseg: 10, flutes: 9, seed: 21 }).translate(0, 7, 0), this.stone);
         const px = x + sx * Math.cos(rot), pz = z - sx * Math.sin(rot);
         this._place(col, px, terrainHeight(px, pz) - 2.2, pz, 0);
         this._solid({ kind: 'circle', x: px, z: pz, r: 1.3, top: 40 });
@@ -274,6 +335,24 @@ export class Ruins {
       this._rockBridge(cx, z, y, 150, 15 + r() * 14, 7 + r() * 4, (r() - .5) * 0.15);
       addSite('bridge', cx, z, { y, r: 20 });
     }
+    this._buildDecals();
+  }
+
+  /** One instanced draw of soft contact-occlusion pools where stone meets sand. */
+  _buildDecals() {
+    const n = this.decals.length; if (!n) return;
+    const g = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), sz = new Float32Array(n * 4);
+    const mat = new THREE.ShaderMaterial({ uniforms: { ...THREE.UniformsUtils.clone(THREE.UniformsLib.fog), ...this.decalU }, vertexShader: DECAL_VERT, fragmentShader: DECAL_FRAG, transparent: true, depthWrite: false, fog: true, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+    const im = new THREE.InstancedMesh(g, mat, n), M = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0);
+    this.decals.forEach((d, i) => {
+      q.setFromAxisAngle(up, d.rot);
+      M.compose(new THREE.Vector3(d.x, d.y, d.z), q, new THREE.Vector3(2 * (d.hx + d.m), 1, 2 * (d.hz + d.m)));
+      im.setMatrixAt(i, M); sz.set([d.hx, d.hz, d.m, d.rad], i * 4);
+    });
+    g.setAttribute('iSize', new THREE.InstancedBufferAttribute(sz, 4));
+    im.frustumCulled = false; im.renderOrder = 1;
+    this.scene.add(im);
+    this.decalMesh = im;
   }
 
   /** One plaza of the ruined city. Coordinates are path-relative: lx across the path (mirrored per seed), lz along it. */
@@ -378,6 +457,10 @@ export class Ruins {
         c.sh.matrixWorldNeedsUpdate = true;
       }
     }
+    // shadows and contact occlusion take the chapter's shade colour; stone sand follows the terrain
+    this.shadowU.uCol.value.copy(palette.shade).multiplyScalar(0.5);
+    this.decalU.uCol.value.copy(palette.shade).multiplyScalar(0.4);
+    updateStone(this.stoneMats, dusk);
     // window lights come on toward dusk
     const k = THREE.MathUtils.smoothstep(dusk, 0.0, 1.0);
     for (const m of this.windowMats) m.color.copy(HDR_AMBER).multiplyScalar(k);

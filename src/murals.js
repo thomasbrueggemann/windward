@@ -53,6 +53,44 @@ function ground(g, W, y) {
   for (let i = 0; i <= 40; i++) g.lineTo(W * 0.06 + (W * 0.88) * i / 40, y + Math.sin(i * 0.6) * 6); g.stroke(); g.restore();
 }
 
+
+// ---- aged plaster behind the paint, and weathering that eats through it (built once, drawn with one call each)
+let _wall = null;
+function wallLayers() {
+  if (_wall) return _wall;
+  const W = 1464, H = 834, r = rngFor('plaster');
+  const mk = () => { const c = document.createElement('canvas'); c.width = W; c.height = H; return c; };
+  const plaster = mk(), g = plaster.getContext('2d');
+  g.fillStyle = 'rgba(238,188,112,0.72)'; g.fillRect(0, 0, W, H);
+  for (let i = 0; i < 46; i++) {      // big soft stains
+    const x = r() * W, y = r() * H, rad = 80 + r() * 260, gr = g.createRadialGradient(x, y, 0, x, y, rad);
+    const dark = r() < 0.6; gr.addColorStop(0, dark ? 'rgba(150,80,25,0.12)' : 'rgba(255,236,190,0.16)'); gr.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = gr; g.fillRect(x - rad, y - rad, rad * 2, rad * 2);
+  }
+  for (let i = 0; i < 26; i++) {      // rain streaks
+    const x = r() * W, y = r() * H * 0.6, l = 80 + r() * 240, gr = g.createLinearGradient(0, y, 0, y + l);
+    gr.addColorStop(0, 'rgba(110,60,25,0)'); gr.addColorStop(0.3, 'rgba(110,60,25,0.07)'); gr.addColorStop(1, 'rgba(110,60,25,0)');
+    g.fillStyle = gr; g.fillRect(x, y, 3 + r() * 9, l);
+  }
+  for (let i = 0; i < 9000; i++) { g.fillStyle = r() < 0.55 ? 'rgba(130,65,20,0.08)' : 'rgba(255,240,205,0.12)'; g.fillRect(r() * W, r() * H, 1 + r() * 3, 1 + r() * 2); }
+  g.lineCap = 'round';
+  for (let i = 0; i < 16; i++) {      // hairline cracks
+    g.strokeStyle = 'rgba(120,60,20,0.22)'; g.lineWidth = 1 + r(); g.beginPath();
+    let x = r() * W, y = r() * H; g.moveTo(x, y);
+    for (let k = 0; k < 9; k++) { x += (r() - 0.5) * 70; y += (r() - 0.3) * 60; g.lineTo(x, y); }
+    g.stroke();
+  }
+  const ed = g.createRadialGradient(W / 2, H / 2, H * 0.35, W / 2, H / 2, W * 0.62);
+  ed.addColorStop(0, 'rgba(90,45,15,0)'); ed.addColorStop(1, 'rgba(90,45,15,0.34)');
+  g.fillStyle = ed; g.fillRect(0, 0, W, H);
+  const erode = mk(), e = erode.getContext('2d');
+  e.fillStyle = '#000';
+  for (let i = 0; i < 3200; i++) { const s = r(), w = 1 + s * s * 9; e.globalAlpha = 0.5 + r() * 0.5; e.fillRect(r() * W, r() * H, w, w * (0.4 + r() * 0.8)); }
+  for (let i = 0; i < 14; i++) { const x = r() * W, y = r() * H, rad = 20 + r() * 60; e.globalAlpha = 0.5; for (let k = 0; k < 60; k++) { const a = r() * 6.28, d = r() * rad; e.fillRect(x + Math.cos(a) * d, y + Math.sin(a) * d, 2 + r() * 5, 2 + r() * 4); } }
+  e.globalAlpha = 1;
+  return (_wall = { plaster, erode, W, H });
+}
+
 const MURALS = [
   // 1: a procession of travelers toward the mountain
   (g, W, H, r) => [
@@ -136,11 +174,18 @@ export function drawMural(canvas, index, t, size = null) {
   g.translate(152, 82);
   const items = MURALS[index % MURALS.length](g, w - 304, h - 164, rngFor('mural' + index));
   const n = items.length;
+  const wall = size ? null : wallLayers();
+  if (wall) { g.shadowColor = 'rgba(70,30,8,0.4)'; g.shadowOffsetX = 2; g.shadowOffsetY = 2.5; }
   for (let i = 0; i < n; i++) {
     const a = Math.max(0, Math.min(1, t * (n + 2) - i));
     if (a <= 0) continue;
     g.globalAlpha = a;
     g.save(); g.translate(0, (1 - a) * 14); items[i](); g.restore();
+  }
+  if (wall) {
+    g.shadowColor = 'transparent'; g.globalAlpha = 0.85;
+    g.globalCompositeOperation = 'destination-out'; g.drawImage(wall.erode, 0, 0, w - 304, h - 164);
+    g.globalCompositeOperation = 'destination-over'; g.globalAlpha = 1; g.drawImage(wall.plaster, 0, 0, w - 304, h - 164);
   }
   g.restore();
 }

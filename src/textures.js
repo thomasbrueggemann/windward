@@ -172,6 +172,42 @@ export function makeStoneBump() {
   const t = tex(c, false); t.wrapS = t.wrapT = THREE.RepeatWrapping; return t;
 }
 
+
+/** Tileable RGBA noise for the stone shader: r = blotches, g = detail, b = crack cells (0 on the seams), a = grain. */
+export function makeStoneNoise(S = 256) {
+  const hash = (x, y, s) => { let h = Math.imul(x * 374761393 + y * 668265263 + s * 2147483647, 1274126177); h = Math.imul(h ^ (h >>> 13), 1103515245); return ((h ^ (h >>> 16)) >>> 0) / 4294967296; };
+  const vn = (x, y, per, s) => {
+    const fx = Math.floor(x), fy = Math.floor(y), tx = x - fx, ty = y - fy;
+    const u = tx * tx * (3 - 2 * tx), v = ty * ty * (3 - 2 * ty);
+    const X0 = ((fx % per) + per) % per, Y0 = ((fy % per) + per) % per, X1 = (X0 + 1) % per, Y1 = (Y0 + 1) % per;
+    const a = hash(X0, Y0, s), b = hash(X1, Y0, s), c = hash(X0, Y1, s), d = hash(X1, Y1, s);
+    return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+  };
+  const fbm = (x, y, per, oct, s) => { let a = 1, n = 0, t = 0; for (let i = 0; i < oct; i++) { t += a * vn(x * (1 << i), y * (1 << i), per * (1 << i), s + i); n += a; a *= 0.5; } return t / n; };
+  const cell = (x, y, per) => {
+    const cx = Math.floor(x), cy = Math.floor(y); let d1 = 9, d2 = 9;
+    for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) {
+      const gx = cx + i, gy = cy + j, wx = ((gx % per) + per) % per, wy = ((gy % per) + per) % per;
+      const px = gx + hash(wx, wy, 91), py = gy + hash(wx, wy, 92), d = Math.hypot(px - x, py - y);
+      if (d < d1) { d2 = d1; d1 = d; } else if (d < d2) d2 = d;
+    }
+    return d2 - d1;
+  };
+  const data = new Uint8Array(S * S * 4);
+  for (let j = 0; j < S; j++) for (let i = 0; i < S; i++) {
+    const u = i / S, v = j / S, k = (j * S + i) * 4;
+    const wx = (vn(u * 8, v * 8, 8, 70) - 0.5) * 0.1 + (vn(u * 16, v * 16, 16, 72) - 0.5) * 0.04, wy = (vn(u * 8, v * 8, 8, 71) - 0.5) * 0.1 + (vn(u * 16, v * 16, 16, 73) - 0.5) * 0.04;   // warped seams
+    data[k] = fbm(u * 4, v * 4, 4, 4, 1) * 255;
+    data[k + 1] = fbm(u * 8, v * 8, 8, 5, 11) * 255;
+    data[k + 2] = Math.min(1, cell((u + wx) * 7, (v + wy) * 7, 7) * 2.2) * 255;
+    data[k + 3] = (vn(u * 64, v * 64, 64, 31) * 0.6 + vn(u * 128, v * 128, 128, 32) * 0.4) * 255;
+  }
+  const t = new THREE.DataTexture(data, S, S, THREE.RGBAFormat);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearMipmapLinearFilter;
+  t.generateMipmaps = true; t.anisotropy = 4; t.needsUpdate = true;
+  return t;
+}
+
 /** Soft blob shadow. */
 export function makeBlobShadow() {
   const c = canvas(128, 128), g = c.getContext('2d');
