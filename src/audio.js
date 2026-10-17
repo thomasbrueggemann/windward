@@ -312,7 +312,7 @@ export class AudioEngine {
     const scale = [69, 71, 74, 76, 79, 81];
     const midi = scale[(Math.random() * scale.length) | 0] + (this.mood === 2 ? -5 : 0);
     const dur = big ? 1.6 : 0.55;
-    const vol = (big ? 0.16 : 0.12) / (1 + dist * 0.06);
+    const vol = (big ? 0.42 : 0.32) / (1 + dist * 0.045);
     const o = ctx.createOscillator(); o.type = 'sine';
     o.frequency.setValueAtTime(mtof(midi) * 0.94, t); o.frequency.exponentialRampToValueAtTime(mtof(midi), t + 0.08);
     const o2 = ctx.createOscillator(); o2.type = 'triangle'; o2.frequency.value = mtof(midi) * 2.004;
