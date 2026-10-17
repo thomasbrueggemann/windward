@@ -88,6 +88,7 @@ const player = new Player(scene);
 player.colliders = ruins.colliders;
 player.shelters = ruins.shelters;
 const cam = new ChaseCamera(camera);
+cam.colliders = ruins.colliders;
 const audio = new AudioEngine();
 
 const env = { sunDir: new THREE.Vector3(), pal: null, progress: 0 };
@@ -422,7 +423,21 @@ function updateEnding(dt, time) {
   } else if (t < 18) {
     // six white figures gather and revive the traveler
     const k = smooth(7, 11, t);
-    fig.forEach((m, i) => { m.scale.setScalar(Math.max(0.001, k * 1.4 * (1 + 0.03 * Math.sin(time * 2 + i)))); m.position.y = terrainHeight(m.position.x, m.position.z) + k * 0.2 + Math.sin(time * 1.3 + i) * 0.05; });
+    const song = smooth(11, 12.5, t) * (1 - smooth(16.5, 18, t));
+    fig.forEach((m, i) => {
+      // they drift down out of the snow, hover, and lean over the fallen traveler; their robes billow as they sing
+      const arrive = smooth(7 + i * 0.35, 10.5 + i * 0.35, t);
+      m.scale.setScalar(Math.max(0.001, 1.4 * arrive));
+      m.position.y = terrainHeight(m.position.x, m.position.z) + (1 - arrive) * 7 + 0.25 * arrive + Math.sin(time * 1.3 + i) * 0.08 + song * 0.35;
+      const rig = m.userData.rig;
+      rig.body.rotation.x = 0.22 * arrive - song * 0.12;
+      rig.head.rotation.x = 0.35 * arrive - song * 0.4;
+      rig.tipPivot.rotation.x = -0.15 - Math.sin(time * 1.7 + i) * 0.08;
+      const sw = rig.sway;
+      sw.uTime.value = time + i * 3;
+      sw.uFlutter.value = 0.5 + 0.8 * (1 - arrive) + song * 0.9;
+      sw.uFlare.value = (1 - arrive) * 0.8 + song * 0.7;
+    });
     if (t > 11 && !ending.sang) { ending.sang = true; audio.ending(); }
     if (t > 12) { ending.collapse = 1 - smooth(12, 16, t); player.charge = Math.min(1, player.charge + dt * 0.4); }
     if (Math.random() < 0.5) {

@@ -78,16 +78,20 @@ export function buildTraveler({ white = false } = {}) {
   const head = new THREE.Group(); head.position.y = HEAD_Y; body.add(head);
   const skull = new THREE.Group(); skull.scale.set(0.93, 1.13, 1.0); head.add(skull);
   skull.add(new THREE.Mesh(new THREE.SphereGeometry(0.19, 32, 20), hoodMat));
-  const faceMat = new THREE.MeshStandardMaterial({ color: white ? 0x2a2420 : 0x0c0504, roughness: 0.6 });
-  const face = new THREE.Mesh(new THREE.SphereGeometry(0.1925, 24, 16, Math.PI / 2 - 0.78, 1.56, Math.PI / 2 - 0.62, 1.12), faceMat);
+  // an oval of shadow inside the hood
+  const faceMat = new THREE.MeshLambertMaterial({ color: white ? 0x1a1310 : 0x0c0504 });
+  const face = new THREE.Mesh(new THREE.SphereGeometry(0.15, 28, 18), faceMat);
+  face.scale.set(0.8, 0.9, 0.42); face.position.set(0, -0.012, 0.13);
   skull.add(face);
   const eyeMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(3.4, 2.9, 2.0) });
   const eyes = [];
   for (const sx of [-1, 1]) {
     const eye = new THREE.Mesh(new THREE.CircleGeometry(0.015, 12), eyeMat);
-    const d = new THREE.Vector3(sx * 0.3, 0.06, 0.95).normalize();
-    eye.position.copy(d).multiplyScalar(0.196);
-    eye.lookAt(d.clone().multiplyScalar(2));
+    // sit on the face's oval surface, angled slightly outward
+    const ex = sx * 0.046, ey = 0.008;
+    const ez = 0.13 + 0.063 * Math.sqrt(Math.max(0, 1 - (ex / 0.12) ** 2 - (ey / 0.135) ** 2)) + 0.004;
+    eye.position.set(ex, ey, ez);
+    eye.rotation.y = sx * 0.45;
     eye.scale.set(0.85, 1.55, 1);
     skull.add(eye); eyes.push(eye);
   }

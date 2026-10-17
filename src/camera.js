@@ -23,6 +23,34 @@ export class ChaseCamera {
     this.lift = 0;              // extra pitch pushed in by terrain occlusion
     this.ready = false;
     this._want = new THREE.Vector3();
+    this.colliders = null;
+    this.clip = 8;
+  }
+
+  /** Distance along the ray from `o` at which it first enters a collider (or `max`). */
+  _blocked(o, ux, uy, uz, max) {
+    const R = 0.55;
+    const near = this._near || (this._near = []);
+    near.length = 0;
+    for (const c of this.colliders) {
+      const ext = c.kind === 'circle' ? c.r : Math.hypot(c.hx, c.hz);
+      if (Math.hypot(c.x - o.x, c.z - o.z) < max + ext + 2) near.push(c);
+    }
+    if (!near.length) return max;
+    for (let t = 0.8; t <= max; t += 0.4) {
+      const x = o.x + ux * t, y = o.y + uy * t, z = o.z + uz * t;
+      for (const c of near) {
+        if (y > c.top + 0.4 || y < (c.bottom ?? -1e9)) continue;
+        const dx = x - c.x, dz = z - c.z;
+        if (c.kind === 'circle') { if (dx * dx + dz * dz < (c.r + R) ** 2) return Math.max(2.4, t - 0.5); }
+        else {
+          const cs = Math.cos(c.rot), sn = Math.sin(c.rot);
+          const lx = dx * cs + dz * sn, lz = -dx * sn + dz * cs;
+          if (Math.abs(lx) < c.hx + R && Math.abs(lz) < c.hz + R) return Math.max(2.4, t - 0.5);
+        }
+      }
+    }
+    return max;
   }
 
   snap(player) {
@@ -80,10 +108,12 @@ export class ChaseCamera {
     this.lift += (need - this.lift) * exp(need > this.lift ? 5 : 1.0, dt);
 
     const p2 = this.pitch + this.lift, c2 = Math.cos(p2);
-    const want = this._want.set(
-      this.target.x + Math.sin(this.yaw) * c2 * this.dist,
-      this.target.y + Math.sin(p2) * this.dist,
-      this.target.z + Math.cos(this.yaw) * c2 * this.dist);
+    // stone between the traveler and the camera: pull in so columns and walls never fill the view
+    const ux = Math.sin(this.yaw) * c2, uy = Math.sin(p2), uz = Math.cos(this.yaw) * c2;
+    const block = this.colliders ? this._blocked(this.target, ux, uy, uz, this.dist) : this.dist;
+    this.clip += ((block < this.dist ? block : this.dist) - this.clip) * (block < this.clip ? 1 : exp(3, dt));
+    const cd = Math.min(this.dist, this.clip);
+    const want = this._want.set(this.target.x + ux * cd, this.target.y + uy * cd, this.target.z + uz * cd);
     if (!this.ready) { this.pos.copy(want); this.ready = true; }
     const k = exp(extra.follow ?? 8, dt);
     this.pos.x += (want.x - this.pos.x) * k;
