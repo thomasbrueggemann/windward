@@ -12,14 +12,22 @@ const shaftFrag = /* glsl */`
 precision highp float;
 uniform float uIntensity, uTime; uniform vec3 uColor;
 varying vec2 vUv; varying vec3 vN; varying vec3 vW;
+float h21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float vn(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3. - 2. * f); return mix(mix(h21(i), h21(i + vec2(1., 0.)), f.x), mix(h21(i + vec2(0., 1.)), h21(i + vec2(1., 1.)), f.x), f.y); }
 void main() {
   vec3 V = normalize(cameraPosition - vW);
   float side = pow(abs(dot(normalize(vN), V)), 1.4);
   float d = length(cameraPosition - vW);
   float near = smoothstep(3., 20., d);
-  float a = (0.18 + 0.82 * vUv.y) * side * near * uIntensity * (0.8 + 0.2 * sin(uTime * 0.6 + vW.x * 0.2 + vW.z * 0.1));
+  // dusty, drifting streaks inside the beam; a few motes catch the light
+  float ang = atan(vW.x - vW.z * 0.3, vW.z) * 3.;
+  float streak = 0.55 + 0.6 * vn(vec2(vUv.x * 18. + ang, vUv.y * 1.3 - uTime * 0.04)) * vn(vec2(vUv.x * 7. - ang, vUv.y * 3. + uTime * 0.03));
+  float mote = step(0.992, h21(floor(vec2(vUv.x * 90. + ang * 9., vUv.y * 160. - uTime * 0.7)))) * smoothstep(0.1, 0.5, vUv.y);
+  float a = (0.18 + 0.82 * vUv.y) * side * near * uIntensity * (0.8 + 0.2 * sin(uTime * 0.6 + vW.x * 0.2 + vW.z * 0.1)) * streak;
   a *= smoothstep(0., 0.08, vUv.y);
-  gl_FragColor = vec4(uColor * a, a);
+  a += mote * side * near * uIntensity * 0.5;
+  vec3 col = mix(uColor, uColor * vec3(1.15, 0.95, 0.7), 1. - vUv.y);
+  gl_FragColor = vec4(col * a, a);
 }`;
 
 const BEAM_GEO = (() => { const g = new THREE.PlaneGeometry(1.6, 70); g.translate(0, 35, 0); return g; })();
@@ -140,20 +148,53 @@ export class Props {
     }
     this.shaftMats = shaftMats;
 
-    // ---------------------------------------------------- footprints
+    // ---------------------------------------------------- footprints: heel, ball and toes pressed into the sand; slides leave a groove with berms. They soften and fill in with time.
     const FP = 260;
-    const fgeo = new THREE.PlaneGeometry(0.15, 0.32); fgeo.rotateX(-Math.PI / 2);
+    const fgeo = new THREE.PlaneGeometry(0.2, 0.42); fgeo.rotateX(-Math.PI / 2);
     const age = new THREE.InstancedBufferAttribute(new Float32Array(FP).fill(99), 1).setUsage(THREE.DynamicDrawUsage);
-    fgeo.setAttribute('iAge', age);
+    const kind = new THREE.InstancedBufferAttribute(new Float32Array(FP).fill(1), 1).setUsage(THREE.DynamicDrawUsage);
+    fgeo.setAttribute('iAge', age); fgeo.setAttribute('iKind', kind);
     const fm = new THREE.ShaderMaterial({
-      uniforms: { uColor: { value: new THREE.Color(0.2, 0.06, 0.03) } },
-      vertexShader: `attribute float iAge; varying float vA; varying vec2 vUv; void main(){ vA = iAge; vUv = uv; gl_Position = projectionMatrix * viewMatrix * modelMatrix * instanceMatrix * vec4(position,1.); }`,
-      fragmentShader: `precision highp float; uniform vec3 uColor; varying float vA; varying vec2 vUv; void main(){ float d = length((vUv - .5) * vec2(2.2, 1.4)); float a = smoothstep(1., .3, d) * 0.38 * (1. - clamp(vA / 70., 0., 1.)); gl_FragColor = vec4(uColor, a); }`,
+      uniforms: { uSunXZ: { value: new THREE.Vector2(-0.8, -0.6) }, uLit: { value: new THREE.Color(1, .8, .5) }, uShade: { value: new THREE.Color(.3, .1, .05) } },
+      vertexShader: `attribute float iAge; attribute float iKind; uniform vec2 uSunXZ; varying float vA; varying float vK; varying vec2 vUv; varying vec2 vSun; varying float vD;
+        void main(){ vA = iAge; vK = iKind; vUv = uv;
+          vec3 r = normalize(instanceMatrix[0].xyz), f = normalize(instanceMatrix[2].xyz);
+          vSun = vec2(dot(uSunXZ, r.xz), dot(uSunXZ, f.xz));
+          vec4 w = modelMatrix * instanceMatrix * vec4(position, 1.); vD = length(w.xyz - cameraPosition);
+          gl_Position = projectionMatrix * viewMatrix * w; }`,
+      fragmentShader: `precision highp float; uniform vec3 uLit, uShade; varying float vA; varying float vK; varying vec2 vUv; varying vec2 vSun; varying float vD;
+        float sdE(vec2 p, vec2 c, vec2 r) { return (length((p - c) / r) - 1.) * min(r.x, r.y); }
+        float shape(vec2 q, float slide) {
+          if (slide > 1.5) return sdE(q, vec2(0.), vec2(0.27, 0.5));
+          float d = min(sdE(q, vec2(0.02, -0.3), vec2(0.2, 0.17)), sdE(q, vec2(-0.02, 0.1), vec2(0.3, 0.25)));
+          d = min(d, sdE(q, vec2(0.06, -0.08), vec2(0.13, 0.22)));
+          d = min(d, min(min(sdE(q, vec2(-0.2, 0.37), vec2(0.07, 0.07)), sdE(q, vec2(-0.08, 0.42), vec2(0.065, 0.07))), min(sdE(q, vec2(0.05, 0.42), vec2(0.06, 0.065)), sdE(q, vec2(0.16, 0.37), vec2(0.055, 0.06)))));
+          return d;
+        }
+        float prof(vec2 q, float e, float slide) {
+          float sd = shape(q, slide);
+          float h = smoothstep(e, -e, sd);
+          if (slide > 1.5) h = smoothstep(e, -e, sd + 0.05) - 0.35 * smoothstep(0.07 + e, 0., abs(sd - 0.03));
+          return h;
+        }
+        void main() {
+          float side = vK < 0. ? -1. : 1.;
+          vec2 q = vec2((vUv.x - 0.5) * side, 0.5 - vUv.y);
+          float t = clamp(vA / 70., 0., 1.);
+          float e = mix(0.018, 0.2, t * t);
+          float amp = (1. - smoothstep(0.1, 1., t)) * (1. - smoothstep(170., 340., vD));
+          float h = prof(q, e, abs(vK));
+          vec2 g = vec2(prof(q + vec2(0.02, 0.), e, abs(vK)) - h, prof(q + vec2(0., 0.02), e, abs(vK)) - h) / 0.02;
+          float s = dot(g, vec2(vSun.x * side, vSun.y)) * 0.1 * (1. - t * 0.6);
+          float lit = clamp(0.5 + s * 1.4, 0., 1.);
+          float a = amp * (h * 0.14 + clamp(abs(s) * 1.8, 0., 1.) * 0.5);
+          gl_FragColor = vec4(mix(uShade, uLit, lit), a);
+        }`,
       transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
     });
     this.foot = new THREE.InstancedMesh(fgeo, fm, FP);
     this.foot.frustumCulled = false; this.foot.renderOrder = 2;
-    this.footAge = age; this.footN = FP; this.footNext = 0; this.footSide = 1;
+    this.footAge = age; this.footKind = kind; this.footN = FP; this.footNext = 0; this.footSide = 1;
     const zero = new THREE.Matrix4().makeScale(0, 0, 0);
     for (let i = 0; i < FP; i++) this.foot.setMatrixAt(i, zero);
     scene.add(this.foot);
@@ -182,6 +223,7 @@ export class Props {
     const mat = this._m.makeBasis(rgt, up, f).setPosition(x, y, z);
     if (e.slide) mat.scale(this._v.set(2.6, 1, 2.2));
     const i = this.footNext; this.footNext = (this.footNext + 1) % this.footN;
+    this.footSide = -this.footSide; this.footKind.array[i] = e.slide ? 2 : this.footSide; this.footKind.needsUpdate = true;
     this.foot.setMatrixAt(i, mat); this.foot.instanceMatrix.needsUpdate = true;
     this.footAge.array[i] = 0;
   }
@@ -215,6 +257,7 @@ export class Props {
     for (const e of player.events) if (e.type === 'step' && player.grounded) this.addFootprint(e);
     const fa = this.footAge.array; for (let i = 0; i < this.footN; i++) if (fa[i] < 99) fa[i] += dt;
     this.footAge.needsUpdate = true;
+    { const u = this.foot.material.uniforms; u.uSunXZ.value.set(env.sunDir.x, env.sunDir.z).normalize(); u.uLit.value.copy(env.pal.hi); u.uShade.value.copy(env.pal.shade); }
 
     // glyph collectibles
     for (const g of this.glyphs) {
