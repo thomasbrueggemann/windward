@@ -47,37 +47,43 @@ float glitterLayer(vec2 pxz, float cs, vec3 H, vec3 N){
   return present * pow(sat(dot(rn, H)), 140.);
 }
 
+float aaf(float x){ return 1. - smoothstep(0.7, 2.2, fwidth(x)); }
+float gStreak;
+
 vec3 rippleNormal(vec3 N, vec3 P, float dist){
   float near = 1. - smoothstep(18., 120., dist);
   float mid  = 1. - smoothstep(90., 600., dist);
-  vec2 wd = normalize(uWind);
+  vec2 wd = normalize(uWind), wp = vec2(-wd.y, wd.x);
   float steep = smoothstep(0.10, 0.42, 1. - N.y);
   vec2 dirDown = normalize(N.xz + 1e-4);
 
   // wind ripples: crests perpendicular to the wind, bent by low-frequency noise
   float s = dot(P.xz, wd);
-  float warp = (vnoise(P.xz * 0.09) - .5) * 2.6 + (vnoise(P.xz * 0.42) - .5) * 0.7;
+  float n09 = vnoise(P.xz * 0.09);
+  float warp = (n09 - .5) * 2.6 + (vnoise(P.xz * 0.42) - .5) * 0.7;
   float r = (s + warp) * 9.5;
   float d1 = cos(r - 0.8 * sin(r)) * (1. - 0.8 * cos(r));
-  // contour ripples follow the height on steep faces
-  float rc = (P.y + (vnoise(P.xz * 0.09) - .5) * 5.0 + (vnoise(P.xz * 0.5) - .5) * 0.6) * 6.5;
-  float d2 = cos(rc - 0.8 * sin(rc)) * (1. - 0.8 * cos(rc));
-
   float rpatch = smoothstep(0.30, 0.62, vnoise(P.xz * 0.045 + 7.));
-  float a1 = (1. - steep * 0.35) * d1 * 0.055 * near * rpatch;
-  float a2 = 0.;
+  float a1 = (1. - steep * 0.35) * d1 * 0.055 * near * rpatch * aaf(r);
+  // secondary fine ripples riding the crests, only in the patches
+  float rf = (s + warp * 1.4 + sin(s * 3.1) * 0.12) * 29.;
+  float a4 = cos(rf - 0.6 * sin(rf)) * 0.020 * (1. - smoothstep(10., 60., dist)) * rpatch * aaf(rf);
   // larger, softer ripples that survive in the distance
   float rm = (s + warp * 2.) * 1.9;
   float d3 = cos(rm - 0.7 * sin(rm)) * (1. - 0.7 * cos(rm));
-  float a3 = d3 * 0.035 * mid * (1. - steep * 0.6);
-
+  float a3 = d3 * 0.035 * mid * (1. - steep * 0.6) * aaf(rm);
+  // wind-swept streaks: noise stretched along the wind
+  vec2 sq = vec2(s, dot(P.xz, wp));
+  float st = vnoise(sq * vec2(0.22, 5.5)) * .65 + vnoise(sq * vec2(0.9, 17.)) * .35;
+  gStreak = (st - .5) * (1. - smoothstep(60., 380., dist)) * 2.;
   float sn = 1. + uSnow * 0.5;
   vec3 n = N;
-  n.xz -= wd * (a1 + a3) * sn;
-  n.xz += dirDown * a2;
-  // fine grain
-  vec2 gr = vec2(hash12(floor(P.xz * 38.)), hash12(floor(P.xz * 38.) + 9.7)) - .5;
-  n.xz += gr * 0.06 * near;
+  n.xz -= wd * (a1 + a3 + a4) * sn;
+  n.xz += wp * gStreak * 0.025 * near;
+  // fine grain, smooth noise so it filters instead of shimmering
+  vec2 g2 = P.xz * 52.;
+  float ga = aaf(g2.x) * (1. - smoothstep(25., 90., dist));
+  n.xz += (vec2(vnoise(g2), vnoise(g2 + 17.3)) - .5) * 0.11 * ga;
   return normalize(n);
 }
 
@@ -96,16 +102,27 @@ void main(){
   vec3 sand = mix(uShade, uLit, tone);
   sand = mix(sand, uHi, smoothstep(0.80, 1.0, d) * 0.30);
   sand += uAmb * 0.045;
+  // subsurface-ish: saturated glow along the terminator, warm bounce light filling the shadow faces
+  float term = exp(-pow((mix(dg, d, 0.5) - 0.57) * 11., 2.));
+  sand += uLit * vec3(0.9, 0.42, 0.22) * term * 0.10;
+  sand += uLit * (1. - tone) * (0.07 + 0.05 * sat(-N.y * .5 + .5)) * sat(1.6 - dist * 0.002);
+  sand *= 1. + gStreak * 0.045;
   float cv = vnoise(vWorld.xz * 0.004) * 0.6 + vnoise(vWorld.xz * 0.021) * 0.4;
   sand *= mix(vec3(0.94, 0.88, 0.86), vec3(1.07, 1.01, 0.90), cv);
 
   // --- rock on steep faces, snow on heights / in the cold
   float rockAmt = smoothstep(0.86, 0.58, Ng.y);
   float strata = .5 + .5 * sin(vWorld.y * 0.8 + vnoise(vWorld.xz * 0.05) * 5.);
-  vec3 rock = uRock * (0.30 + 0.9 * tone) * (0.85 + 0.25 * strata);
+  vec2 rq = vWorld.xz * 0.35 + vWorld.y * 0.12;
+  float rk = (vnoise(rq) * .6 + vnoise(rq * 2.7 + 5.) * .4) * (1. - smoothstep(150., 900., dist));
+  float rtone = tone * (0.8 + 0.4 * rk) + (rk - .5) * 0.12 * rockAmt;
+  vec3 rock = uRock * (0.30 + 0.9 * rtone) * (0.85 + 0.25 * strata) * (0.9 + 0.2 * vnoise(vec2(vWorld.x * 0.05 + vWorld.z * 0.03, vWorld.y * 0.9)));
   float snowHigh = smoothstep(470., 640., vWorld.y + 45. * vnoise(vWorld.xz * 0.012)) * (1. - 0.75 * rockAmt);
   float snowAmt = max(uSnow * (1. - 0.55 * rockAmt), snowHigh);
-  vec3 snow = mix(uSnowCol * vec3(0.36, 0.47, 0.8), uSnowCol * 0.95, smoothstep(0.5, 0.82, mix(dg, d, 0.6)));
+  float sk = smoothstep(0.5, 0.82, mix(dg, d, 0.6));
+  vec3 snow = mix(uSnowCol * vec3(0.36, 0.47, 0.8), uSnowCol * 0.95, sk);
+  snow += uSnowCol * vec3(0.05, 0.12, 0.22) * (1. - sk) * (0.5 + 0.5 * vnoise(vWorld.xz * 0.3)) + uSnowCol * vec3(0.9, 0.55, 0.4) * term * 0.03;
+  snow *= 1. + gStreak * 0.03;
   vec3 col = mix(sand, rock, rockAmt);
   col = mix(col, snow, snowAmt);
 
@@ -116,6 +133,9 @@ void main(){
   vec3 H = normalize(L + V);
   float ndh = sat(dot(normalize(mix(Ng, N, 0.12)), H));
   float ocean = pow(ndh, 60.) * 0.9 + pow(ndh, 9.) * 0.05;
+  float ndhR = sat(dot(N, H));
+  float crest = pow(ndhR, 260.) * (1. - smoothstep(30., 200., dist)) * 0.7;
+  ocean += crest;
   float lit = smoothstep(0.0, 0.35, dot(Ng, L));
   ocean *= lit * (1. - rockAmt * 0.8);
   float fres = pow(1. - sat(dot(N, V)), 3.2);
@@ -126,7 +146,13 @@ void main(){
   float l0 = floor(lod), f = lod - l0;
   float g = (1. - f) * glitterLayer(vWorld.xz, exp2(l0), H, Ng) + f * glitterLayer(vWorld.xz, exp2(l0 + 1.), H, Ng);
   vec3 glitter = uGlit * g * 4.5 * uGlitterGain * (0.30 + 0.70 * tone) * (1. - rockAmt);
+  // snow crystals: denser, sharper, cool-white twinkle
+  float gs = glitterLayer(vWorld.xz + 31.7, exp2(l0 - 1.), H, N) * (1. - f) + glitterLayer(vWorld.xz + 31.7, exp2(l0), H, N) * f;
+  glitter += vec3(0.9, 0.97, 1.) * gs * 5. * snowAmt * smoothstep(0.1, 0.5, dot(Ng, L));
 
+  float wet = uCave * smoothstep(0.45, 0.7, vnoise(vWorld.xz * 0.05) * .7 + vnoise(vWorld.xz * 0.23) * .3) * (1. - rockAmt);
+  col *= 1. - wet * 0.25;
+  spec += uAmb * (pow(ndhR, 24.) * 0.5 + fres * 0.5) * wet * 0.8 + uSunColor * pow(ndhR, 300.) * wet * 1.2;
   col = col + spec * (1. - snowAmt * 0.5) + glitter;
 
   // --- warm pools where shafts of light reach the canyon floor
@@ -142,14 +168,17 @@ void main(){
     col = col * (1. + pool * 0.6) + uPoolColor * pool * (0.12 + 0.3 * tone) + uPoolColor * g * pool * 3.;
   }
 
-  // --- aerial perspective (haze warms toward the sun)
-  float fogF = 1. - exp(-pow(dist * uFogD, 2.));
-  float sunAmt = pow(sat(dot(-V, L)), 5.);
-  vec3 fogCol = uFog + uSunColor * sunAmt * 0.07;
+  // --- aerial perspective: blue-ward extinction with distance, Mie forward glow toward the sun, valleys hold haze
+  float fd = pow(dist * uFogD, 2.);
+  float fogF = 1. - exp(-fd);
+  float cs = sat(dot(-V, L));
+  float mie = pow(cs, 6.) * 0.12 + pow(cs, 40.) * 0.22;
+  vec3 fogCol = uFog + uSunColor * mie * (0.4 + 0.6 * fogF);
   fogCol = mix(fogCol, uAmb * 0.9 + uFog * 0.25, uFogTint * smoothstep(0.1, 0.8, fogF));
-  // valleys hold more haze
-  fogF = sat(fogF + (1. - exp(-max(0., 18. - vWorld.y) * 0.004)) * 0.0);
-  col = mix(col, fogCol, fogF);
+  float hz = 1. - exp(-dist * 0.00035 * exp(-max(0., vWorld.y - cameraPosition.y * 0.5) * 0.012));
+  float fogT = sat(fogF + hz * 0.18 * (1. - uCave) * (1. - fogF));
+  vec3 ext = exp(-fd * vec3(0.88, 1.0, 1.18));
+  col = mix(col * mix(vec3(1.), ext, 0.6), fogCol, fogT);
 
   gl_FragColor = vec4(col, 1.0);
 }`;

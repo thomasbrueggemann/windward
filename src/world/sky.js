@@ -26,22 +26,29 @@ void main() {
   // sky gradient, a bright haze band hugging the horizon, and a warmer side toward the sun
   float t = smoothstep(-0.02, 0.55, h);
   vec3 col = mix(uHor, uTop, pow(t, 0.55));
+  col = mix(col, uTop * vec3(0.8, 0.86, 1.0), smoothstep(0.35, 1.0, h) * 0.45);      // deeper zenith
   float band = exp(-abs(h) * 18.);
-  col += uHor * band * 0.22;
+  col += uHor * band * 0.22 + uHor * exp(-abs(h) * 60.) * 0.12;
   float toward = 0.5 + 0.5 * dot(normalize(d.xz + 1e-4), normalize(L.xz + 1e-4));
   col = mix(col, col * vec3(1.06, 0.98, 0.9), toward * (1. - t) * 0.6);
   col = mix(col, uGround, smoothstep(0.0, -0.22, h));
   // sun: hard disc, soft corona, broad atmospheric glow (dimmed by overcast)
   float disc = smoothstep(0.99955, 0.99975, sd);
   float sunVis = 1. - 0.85 * uOvercast;
-  col += uSunColor * (disc * 9. * uSunI * 0.35 * sunVis + pow(sd, 220.) * 1.2 * sunVis + pow(sd, 22.) * 0.34 + pow(sd, 5.) * 0.1)
+  col += uSunColor * (disc * 9. * uSunI * 0.35 * sunVis + pow(sd, 220.) * 1.2 * sunVis + pow(sd, 22.) * 0.34 + pow(sd, 5.) * 0.1 + pow(sd, 1.8) * 0.045)
          * (0.6 + 0.4 * smoothstep(0.6, 0., h));
   // clouds: long cirrus streaks high up, soft banks low on the horizon
   if (h > 0.0) {
     vec2 uv = d.xz / (h + 0.16);
     float c = fbm(vec2(uv.x * 0.5, uv.y * 2.4) + vec2(uTime * 0.004, 0.));
-    c = smoothstep(0.52 - 0.2 * uOvercast, 0.86, c) * smoothstep(0.0, 0.22, h) * (1. - smoothstep(0.55, 0.95, h));
-    vec3 cloudCol = uHor * 1.08 + uSunColor * 0.35 * pow(sd, 3.);
+    float cf = smoothstep(0.0, 0.22, h) * (1. - smoothstep(0.55, 0.95, h));
+    c = smoothstep(0.52 - 0.2 * uOvercast, 0.86, c) * cf;
+    // cheap self-shadowing: density just toward the sun brightens thin edges, shades thick cores
+    vec2 toSun = normalize(L.xz + 1e-4) * 0.05 / (h + 0.16);
+    float c2 = cf * smoothstep(0.52 - 0.2 * uOvercast, 0.86, fbm(vec2(uv.x * 0.5 + toSun.x * 0.5, uv.y * 2.4 + toSun.y * 2.4) + vec2(uTime * 0.004, 0.)));
+    float edge = clamp(c - c2, -1., 1.);
+    vec3 cloudCol = uHor * 1.08 + uSunColor * (0.35 * pow(sd, 3.) + 0.5 * max(edge, 0.) * (0.3 + sd));
+    cloudCol *= 1. - 0.18 * max(-edge, 0.) - 0.1 * c2;
     col = mix(col, cloudCol, c * (0.42 + 0.3 * uOvercast));
     vec2 uv2 = d.xz / (h + 0.05);
     float lowC = fbm(uv2 * 0.35 + vec2(uTime * 0.002, 7.3));
