@@ -33,7 +33,7 @@ export class AudioEngine {
     comp.threshold.value = -20; comp.ratio.value = 3.5; comp.attack.value = 0.02; comp.release.value = 0.35;
     out.connect(comp); comp.connect(ctx.destination);
     this.master = out;
-    out.gain.linearRampToValueAtTime(0.85, ctx.currentTime + 5);
+    out.gain.linearRampToValueAtTime(this.volume ?? 0.85, ctx.currentTime + 5);
 
     // reverb
     this.verb = ctx.createConvolver(); this.verb.buffer = this._impulse(4.4, 2.4);
@@ -306,6 +306,48 @@ export class AudioEngine {
     [0, 7, 12, 16, 19, 24, 28].forEach((o, i) => this._bell(62 + o, t + i * 0.35, 0.08, 7));
     this.intensity = 1;
   }
+  /** A short sung note from another traveler. pan -1..1, dist in metres; big = the long call after a held song. */
+  chirp(pan = 0, dist = 5, big = false) {
+    if (!this.ready) return; const ctx = this.ctx, t = ctx.currentTime;
+    const scale = [69, 71, 74, 76, 79, 81];
+    const midi = scale[(Math.random() * scale.length) | 0] + (this.mood === 2 ? -5 : 0);
+    const dur = big ? 1.6 : 0.55;
+    const vol = (big ? 0.16 : 0.12) / (1 + dist * 0.06);
+    const o = ctx.createOscillator(); o.type = 'sine';
+    o.frequency.setValueAtTime(mtof(midi) * 0.94, t); o.frequency.exponentialRampToValueAtTime(mtof(midi), t + 0.08);
+    const o2 = ctx.createOscillator(); o2.type = 'triangle'; o2.frequency.value = mtof(midi) * 2.004;
+    const vib = ctx.createOscillator(); vib.frequency.value = 5.8; const vg = ctx.createGain(); vg.gain.setValueAtTime(0, t); vg.gain.linearRampToValueAtTime(big ? 14 : 6, t + dur * 0.6);
+    vib.connect(vg); vg.connect(o.detune); vg.connect(o2.detune);
+    const f = ctx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = 1100; f.Q.value = 1.2;
+    const g2 = ctx.createGain(); g2.gain.value = 0.22;
+    const g = ctx.createGain(); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(vol, t + 0.04); g.gain.setTargetAtTime(vol * 0.7, t + 0.1, 0.2); g.gain.setTargetAtTime(0, t + dur, 0.18);
+    const pn = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
+    o.connect(f); o2.connect(g2); g2.connect(f); f.connect(g);
+    if (pn) { pn.pan.value = Math.max(-1, Math.min(1, pan)); g.connect(pn); pn.connect(this.sfxBus); } else g.connect(this.sfxBus);
+    o.start(t); o2.start(t); vib.start(t);
+    const end = t + dur + 1.2; o.stop(end); o2.stop(end); vib.stop(end);
+  }
+  /** Released after a long held song: a bright chord that rings out. */
+  shout() {
+    if (!this.ready) return; const t = this.ctx.currentTime;
+    const base = 69 + (this.mood === 2 ? -5 : 0);
+    [0, 7, 12, 16, 24].forEach((o, i) => this._bell(base + o, t + i * 0.03, 0.07, 3.2));
+    this._noiseBurst(t, 0.9, 2400, 0.7, 0.03);
+  }
+  gust(strength = 1) {
+    if (!this.ready) return; const ctx = this.ctx, t = ctx.currentTime;
+    const s = this._noiseSrc(false); const f = ctx.createBiquadFilter(); f.type = 'bandpass'; f.Q.value = 0.8;
+    f.frequency.setValueAtTime(300, t); f.frequency.linearRampToValueAtTime(1100, t + 1.2); f.frequency.linearRampToValueAtTime(400, t + 3.2);
+    const g = ctx.createGain(); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.32 * strength, t + 0.9); g.gain.linearRampToValueAtTime(0, t + 3.4);
+    s.connect(f); f.connect(g); g.connect(this.ambBus); s.start(t); s.stop(t + 3.5);
+  }
+  chapter() {
+    if (!this.ready) return; const t = this.ctx.currentTime;
+    const base = 50 + (this.mood === 2 ? -5 : 0);
+    [0, 7, 12, 19].forEach((o, i) => this._bell(base + o, t + i * 0.6, 0.06, 6));
+  }
+  setVolume(v) { this.volume = v; if (this.ready) this.master.gain.setTargetAtTime(this._ducked ? v * 0.3 : v, this.ctx.currentTime, 0.2); }
+  duck(on) { this._ducked = on; if (this.ready) this.master.gain.setTargetAtTime((this.volume ?? 0.85) * (on ? 0.3 : 1), this.ctx.currentTime, 0.25); }
   fadeOut(sec = 6) { if (!this.ready) return; const t = this.ctx.currentTime; this.master.gain.cancelScheduledValues(t); this.master.gain.setTargetAtTime(0, t, sec / 4); }
-  fadeIn(sec = 4) { if (!this.ready) return; const t = this.ctx.currentTime; this.master.gain.cancelScheduledValues(t); this.master.gain.setTargetAtTime(0.85, t, sec / 4); }
+  fadeIn(sec = 4) { if (!this.ready) return; const t = this.ctx.currentTime; this.master.gain.cancelScheduledValues(t); this.master.gain.setTargetAtTime(this.volume ?? 0.85, t, sec / 4); }
 }

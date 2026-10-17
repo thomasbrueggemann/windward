@@ -25,6 +25,8 @@ precision highp float;
 uniform vec3 uSunDir, uSunColor, uLit, uHi, uShade, uRim, uGlit, uFog, uRock, uSnowCol, uAmb;
 uniform float uFogD, uSnow, uCave, uTime, uGlitterGain, uFogTint;
 uniform vec2 uWind;
+uniform vec4 uPools[10];
+uniform vec3 uPoolColor;
 varying vec3 vWorld;
 varying vec3 vN;
 varying float vTrench;
@@ -69,7 +71,7 @@ vec3 rippleNormal(vec3 N, vec3 P, float dist){
   float d3 = cos(rm - 0.7 * sin(rm)) * (1. - 0.7 * cos(rm));
   float a3 = d3 * 0.035 * mid * (1. - steep * 0.6);
 
-  float sn = 1. + uSnow * 2.2;
+  float sn = 1. + uSnow * 0.5;
   vec3 n = N;
   n.xz -= wd * (a1 + a3) * sn;
   n.xz += dirDown * a2;
@@ -103,7 +105,7 @@ void main(){
   vec3 rock = uRock * (0.30 + 0.9 * tone) * (0.85 + 0.25 * strata);
   float snowHigh = smoothstep(470., 640., vWorld.y + 45. * vnoise(vWorld.xz * 0.012)) * (1. - 0.75 * rockAmt);
   float snowAmt = max(uSnow * (1. - 0.55 * rockAmt), snowHigh);
-  vec3 snow = mix(uSnowCol * vec3(0.55, 0.66, 0.92), uSnowCol, tone);
+  vec3 snow = mix(uSnowCol * vec3(0.42, 0.53, 0.84), uSnowCol * 0.9, smoothstep(0.3, 0.75, mix(dg, d, 0.6)));
   vec3 col = mix(sand, rock, rockAmt);
   col = mix(col, snow, snowAmt);
 
@@ -117,7 +119,7 @@ void main(){
   float lit = smoothstep(0.0, 0.35, dot(Ng, L));
   ocean *= lit * (1. - rockAmt * 0.8);
   float fres = pow(1. - sat(dot(N, V)), 3.2);
-  vec3 rim = uRim * fres * (0.25 + 0.75 * tone) * 0.55;
+  vec3 rim = uRim * fres * (0.25 + 0.75 * tone) * 0.55 * (1. - 0.35 * uCave);
   vec3 spec = max(uSunColor * ocean * 0.55, rim);
 
   float lod = log2(max(dist * 0.0016, 0.012));
@@ -126,6 +128,19 @@ void main(){
   vec3 glitter = uGlit * g * 4.5 * uGlitterGain * (0.30 + 0.70 * tone) * (1. - rockAmt);
 
   col = col + spec * (1. - snowAmt * 0.5) + glitter;
+
+  // --- warm pools where shafts of light reach the canyon floor
+  if (uCave > 0.01) {
+    float pool = 0.;
+    for (int i = 0; i < 10; i++) {
+      vec4 pl = uPools[i];
+      if (pl.w <= 0.) continue;
+      float d = length(vWorld.xz - pl.xy) / pl.z;
+      pool += pl.w * (exp(-d * d * 2.5) + 0.12 * exp(-d * d * 0.5));
+    }
+    pool = min(pool, 1.2) * uCave;
+    col = col * (1. + pool * 0.6) + uPoolColor * pool * (0.12 + 0.3 * tone) + uPoolColor * g * pool * 3.;
+  }
 
   // --- aerial perspective (haze warms toward the sun)
   float fogF = 1. - exp(-pow(dist * uFogD, 2.));
@@ -148,6 +163,7 @@ export function makeSandUniforms() {
     uRock: { value: new THREE.Color('#5a4a42') }, uSnowCol: { value: new THREE.Color('#eef4fb') }, uAmb: { value: new THREE.Color() },
     uFogD: { value: 0.0005 }, uFogTint: { value: 0 }, uSnow: { value: 0 }, uCave: { value: 0 }, uTime: { value: 0 }, uGlitterGain: { value: 1 },
     uWind: { value: new THREE.Vector2(WIND.x, WIND.z) },
+    uPools: { value: Array.from({ length: 10 }, () => new THREE.Vector4()) }, uPoolColor: { value: new THREE.Color(1.0, 0.62, 0.28) },
   };
 }
 
@@ -264,19 +280,31 @@ export class Terrain {
   }
 }
 
-/** One coarse mesh for the whole level; sits a little below the near chunks. */
+/** One coarse mesh for the whole level (finer around the mountain); sits a little below the near chunks. */
 export function buildFarTerrain(material) {
-  const x0 = -3400, x1 = 3400, z0 = 900, z1 = -4300, S = 36;
-  const nx = Math.ceil((x1 - x0) / S) + 1, nz = Math.ceil((z0 - z1) / S) + 1;
+  // non-uniform grid lines: dense where the mountain's ridges need it, sparse elsewhere
+  const lines = (a, b, fineA, fineB, fine, coarse) => {
+    const out = [a];
+    let v = a;
+    while (v < b) { v += (v >= fineA && v < fineB) ? fine : coarse; out.push(Math.min(v, b)); }
+    return out;
+  };
+  const xs = lines(-3400, 3400, -1500, 1500, 16, 34);
+  const zs = lines(-4300, 900, -3900, -1450, 16, 34).reverse();      // +z (start) first
+  const nx = xs.length, nz = zs.length;
   const pos = new Float32Array(nx * nz * 3), nor = new Float32Array(nx * nz * 3), tr = new Float32Array(nx * nz);
   const hs = new Float32Array(nx * nz);
-  for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) hs[j * nx + i] = terrainHeightFar(x0 + i * S, z0 - j * S);
+  for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) hs[j * nx + i] = terrainHeightFar(xs[i], zs[j]);
   const at = (i, j) => hs[Math.min(nz - 1, Math.max(0, j)) * nx + Math.min(nx - 1, Math.max(0, i))];
   for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) {
     const o = j * nx + i;
-    pos[o * 3] = x0 + i * S; pos[o * 3 + 1] = hs[o] - 7; pos[o * 3 + 2] = z0 - j * S;
-    const dhdx = (at(i + 1, j) - at(i - 1, j)) / (2 * S);
-    const dhdz = -(at(i, j + 1) - at(i, j - 1)) / (2 * S);
+    const trv = trenchAmount(xs[i], zs[j]);
+    tr[o] = trv;
+    // sink the coarse mesh inside the canyon so its interpolated walls never poke through the near chunks
+    pos[o * 3] = xs[i]; pos[o * 3 + 1] = hs[o] - 7 - 30 * Math.min(1, trv * 3); pos[o * 3 + 2] = zs[j];
+    const i0 = Math.max(0, i - 1), i1 = Math.min(nx - 1, i + 1), j0 = Math.max(0, j - 1), j1 = Math.min(nz - 1, j + 1);
+    const dhdx = (at(i1, j) - at(i0, j)) / (xs[i1] - xs[i0]);
+    const dhdz = (at(i, j1) - at(i, j0)) / (zs[j1] - zs[j0]);
     const il = 1 / Math.hypot(dhdx, 1, dhdz);
     nor[o * 3] = -dhdx * il; nor[o * 3 + 1] = il; nor[o * 3 + 2] = -dhdz * il;
   }

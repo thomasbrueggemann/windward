@@ -29,15 +29,32 @@ void main() {
   gl_FragColor = vec4(uColor * a, a);
 }`;
 
+const BEAM_GEO = (() => { const g = new THREE.PlaneGeometry(1.6, 70); g.translate(0, 35, 0); return g; })();
+function makeBeamTexture() {
+  const c = document.createElement('canvas'); c.width = 32; c.height = 256;
+  const g = c.getContext('2d');
+  const lg = g.createLinearGradient(0, 256, 0, 0);
+  lg.addColorStop(0, 'rgba(255,240,210,1)'); lg.addColorStop(0.15, 'rgba(255,230,180,0.55)'); lg.addColorStop(1, 'rgba(255,220,160,0)');
+  g.fillStyle = lg; g.fillRect(0, 0, 32, 256);
+  g.globalCompositeOperation = 'destination-in';
+  const hg = g.createLinearGradient(0, 0, 32, 0);
+  hg.addColorStop(0, 'rgba(0,0,0,0)'); hg.addColorStop(0.5, 'rgba(0,0,0,1)'); hg.addColorStop(1, 'rgba(0,0,0,0)');
+  g.fillStyle = hg; g.fillRect(0, 0, 32, 256);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+}
+
 export class Props {
   constructor(scene, ruins, fx) {
     this.scene = scene; this.ruins = ruins; this.fx = fx;
     this.r = rng(4242);
     this.events = [];
+    this._pending = [];
+    this._camPos = null;
 
     // ---------------------------------------------------- collectible glyphs
     this.glyphs = [];
     const gtex = [0, 1, 2, 3, 4, 5].map(makeGlyphSprite);
+    const beamTex = makeBeamTexture();
     const ringTex = makeRingTexture();
     GLYPH_SPOTS.forEach(([z, off, up], i) => {
       const x = pathX(z) + off, y = terrainHeight(x, z) + 1.8 + up;
@@ -45,8 +62,11 @@ export class Props {
       const spr = new THREE.Sprite(mat); spr.scale.set(1.7, 1.7, 1); spr.position.set(x, y, z);
       const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: ringTex, color: new THREE.Color(1.6, 1.2, 0.7), blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, fog: false }));
       halo.scale.set(3.4, 3.4, 1); halo.position.copy(spr.position);
-      scene.add(spr, halo);
-      this.glyphs.push({ spr, halo, base: new THREE.Vector3(x, y, z), phase: i * 1.7, taken: false, fade: 1 });
+      // a thin pillar of light so the symbol can be spotted from far across the dunes
+      const beam = new THREE.Mesh(BEAM_GEO, new THREE.MeshBasicMaterial({ map: beamTex, color: new THREE.Color(2.2, 1.7, 1.0), transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, fog: false, side: THREE.DoubleSide }));
+      beam.position.set(x, y, z); beam.renderOrder = 4;
+      scene.add(spr, halo, beam);
+      this.glyphs.push({ spr, halo, beam, base: new THREE.Vector3(x, y, z), phase: i * 1.7, taken: false, fade: 1 });
     });
 
     // ---------------------------------------------------- floating cloth
@@ -102,7 +122,8 @@ export class Props {
     for (let z = zAtProgress(0.55); z > zAtProgress(0.735); z -= 38 + r() * 14) {
       const cx = ruins._canyonCentre(z) + (r() - .5) * 22;
       const floor = terrainHeight(cx, z);
-      const geo = new THREE.CylinderGeometry(4 + r() * 3, 7 + r() * 4, 80, 20, 1, true);
+      const rb = 7 + r() * 4;
+      const geo = new THREE.CylinderGeometry(4 + r() * 3, rb, 80, 20, 1, true);
       geo.translate(0, 40, 0);
       const m = new THREE.ShaderMaterial({
         uniforms: { uIntensity: { value: 0 }, uTime: { value: 0 }, uColor: { value: new THREE.Color(2.2, 1.7, 0.9) } },
@@ -113,13 +134,13 @@ export class Props {
       mesh.frustumCulled = false; mesh.renderOrder = 3;
       scene.add(mesh);
       shaftMats.push(m);
-      this.shafts.push({ mesh, x: cx, z });
+      this.shafts.push({ mesh, x: cx, z, r: rb });
     }
     this.shaftMats = shaftMats;
 
     // ---------------------------------------------------- footprints
     const FP = 140;
-    const fgeo = new THREE.PlaneGeometry(0.2, 0.42); fgeo.rotateX(-Math.PI / 2);
+    const fgeo = new THREE.PlaneGeometry(0.15, 0.32); fgeo.rotateX(-Math.PI / 2);
     const age = new THREE.InstancedBufferAttribute(new Float32Array(FP).fill(99), 1).setUsage(THREE.DynamicDrawUsage);
     fgeo.setAttribute('iAge', age);
     const fm = new THREE.ShaderMaterial({
@@ -149,38 +170,65 @@ export class Props {
     this.cloth.mesh.count = this.pieces.length;
   }
 
-  addFootprint(player) {
-    const p = player.pos;
-    const side = (this.footSide *= -1);
-    const hx = Math.cos(player.heading) * 0.16 * side, hz = -Math.sin(player.heading) * 0.16 * side;
-    const x = p.x + hx, z = p.z + hz, y = terrainHeight(x, z) + 0.04;
+  addFootprint(e) {
+    const x = e.x, z = e.z, y = terrainHeight(x, z) + 0.04;
     const g = terrainGradient(x, z);
-    const n = this._v.set(-g.x, 1, -g.z).normalize();
-    const up = n.clone();
-    const f = new THREE.Vector3(Math.sin(player.heading), 0, Math.cos(player.heading));
+    const up = this._v.set(-g.x, 1, -g.z).normalize();
+    const f = new THREE.Vector3(Math.sin(e.heading), 0, Math.cos(e.heading));
     f.addScaledVector(up, -f.dot(up)).normalize();
     const rgt = new THREE.Vector3().crossVectors(up, f).normalize();
-    const mat = new THREE.Matrix4().makeBasis(rgt, up, f).setPosition(x, y, z);
+    const mat = this._m.makeBasis(rgt, up, f).setPosition(x, y, z);
     const i = this.footNext; this.footNext = (this.footNext + 1) % this.footN;
     this.foot.setMatrixAt(i, mat); this.foot.instanceMatrix.needsUpdate = true;
     this.footAge.array[i] = 0;
   }
 
+  /** A released, held song: wakes every dormant banner and sets floating cloth glowing within `radius`. */
+  wake(p, radius, fx) {
+    for (const b of this.banners) {
+      if (b.target) continue;
+      if (Math.hypot(b.center.x - p.x, b.center.z - p.z) < radius + b.len * 0.35) this._awaken(b, fx);
+    }
+    for (const pc of this.pieces) if (pc.pos.distanceToSquared(p) < radius * radius) pc.glow = 1;
+  }
+
+  _awaken(b, fx) {
+    b.target = 1; b.pulse = 1; b.awakened = true;
+    this._pending.push({ type: 'awaken', banner: b });
+    for (let i = 0; i < 40; i++) {
+      const t = Math.random(), px = b.a.x + (b.b.x - b.a.x) * t, pz = b.a.z + (b.b.z - b.a.z) * t;
+      fx.sparkles.emit(px, b.center.y + Math.random() * 3, pz, (Math.random() - .5), 1 + Math.random() * 2, (Math.random() - .5), 1.5, 0.2, 3, 1.6, 0.7, 1, 1, 0, -0.4);
+    }
+  }
+
   /** @returns events: {type:'glyph'|'awaken'|'recharge'} */
   update(dt, time, player, env, fx) {
     const ev = this.events; ev.length = 0;
+    ev.push(...this._pending); this._pending.length = 0;
     clothUniforms.uTime.value = time;
     const pp = player.pos;
 
     // footsteps
-    for (const e of player.events) if (e === 'step' && player.grounded) this.addFootprint(player);
+    for (const e of player.events) if (e.type === 'step' && player.grounded) this.addFootprint(e);
     const fa = this.footAge.array; for (let i = 0; i < this.footN; i++) if (fa[i] < 99) fa[i] += dt;
     this.footAge.needsUpdate = true;
 
     // glyph collectibles
     for (const g of this.glyphs) {
-      if (g.taken) { g.fade = Math.max(0, g.fade - dt * 3); g.spr.material.opacity = g.halo.material.opacity = g.fade; if (g.fade <= 0) { g.spr.visible = g.halo.visible = false; } continue; }
+      if (g.taken) {
+        g.fade = Math.max(0, g.fade - dt * 3); g.spr.material.opacity = g.halo.material.opacity = g.fade;
+        g.beam.material.opacity *= Math.exp(-4 * dt);
+        if (g.fade <= 0) { g.spr.visible = g.halo.visible = false; g.beam.visible = g.beam.material.opacity > 0.01; }
+        continue;
+      }
       const bob = Math.sin(time * 1.6 + g.phase) * 0.25;
+      {
+        const dd = Math.hypot(g.base.x - pp.x, g.base.z - pp.z);
+        const cam = this._camPos;
+        g.beam.material.opacity = smooth(12, 40, dd) * (1 - smooth(380, 520, dd)) * (0.55 + 0.15 * Math.sin(time * 2 + g.phase)) * (1 - 0.6 * env.pal.snow);
+        g.beam.visible = g.beam.material.opacity > 0.005;
+        if (cam) g.beam.rotation.y = Math.atan2(cam.x - g.base.x, cam.z - g.base.z);
+      }
       g.spr.position.set(g.base.x, g.base.y + bob, g.base.z);
       g.halo.position.copy(g.spr.position);
       g.halo.material.rotation = time * 0.3;
@@ -228,14 +276,7 @@ export class Props {
     // banners wake when sung to
     for (const b of this.banners) {
       const d = Math.hypot(b.center.x - pp.x, b.center.z - pp.z);
-      if (player.sing > 0.4 && d < 22 + b.len * 0.35 && !b.target) {
-        b.target = 1; b.pulse = 1; b.awakened = true;
-        ev.push({ type: 'awaken', banner: b });
-        for (let i = 0; i < 40; i++) {
-          const t = Math.random(), px = b.a.x + (b.b.x - b.a.x) * t, pz = b.a.z + (b.b.z - b.a.z) * t;
-          fx.sparkles.emit(px, b.center.y + Math.random() * 3, pz, (Math.random() - .5), 1 + Math.random() * 2, (Math.random() - .5), 1.5, 0.2, 3, 1.6, 0.7, 1, 1, 0, -0.4);
-        }
-      }
+      if (player.sing > 0.4 && d < 22 + b.len * 0.35 && !b.target) this._awaken(b, fx);
       if (d < 140) b.update(dt, time);
     }
 

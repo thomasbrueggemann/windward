@@ -85,26 +85,44 @@ export function makeSoftDot() {
   return tex(c);
 }
 
-/** Robe: warm red cloth, gold geometric hem, pale glyph on the chest. */
+/** Robe: deep red cloth, gold geometric hem, a gold band down the front (u = 0 / 1 is the front). */
 export function makeRobeTexture(white = false) {
-  const W = 256, H = 256, c = canvas(W, H), g = c.getContext('2d');
+  const W = 512, H = 256, c = canvas(W, H), g = c.getContext('2d');
   const gr = g.createLinearGradient(0, 0, 0, H);
-  if (white) { gr.addColorStop(0, '#f6efe4'); gr.addColorStop(1, '#d9cfbf'); }
-  else { gr.addColorStop(0, '#c4421f'); gr.addColorStop(0.55, '#a02c16'); gr.addColorStop(1, '#6e1a0e'); }
+  if (white) { gr.addColorStop(0, '#fbf6ee'); gr.addColorStop(1, '#e2d9ca'); }
+  else { gr.addColorStop(0, '#b8341a'); gr.addColorStop(0.5, '#9e2614'); gr.addColorStop(1, '#7a1a0c'); }
   g.fillStyle = gr; g.fillRect(0, 0, W, H);
-  // cloth weave noise
+  // cloth weave noise + soft vertical folds
   const r = rng(11);
-  g.globalAlpha = 0.07;
-  for (let i = 0; i < 2200; i++) { g.fillStyle = r() > 0.5 ? '#000' : '#fff'; g.fillRect(r() * W, r() * H, 1 + r() * 8, 1); }
+  for (let x = 0; x < W; x += 2) {
+    const f = Math.sin(x / W * Math.PI * 2 * 9) * 0.5 + Math.sin(x / W * Math.PI * 2 * 23 + 1) * 0.3;
+    g.fillStyle = f > 0 ? `rgba(255,220,180,${0.05 * f})` : `rgba(30,0,0,${-0.09 * f})`;
+    g.fillRect(x, 0, 2, H);
+  }
+  g.globalAlpha = 0.06;
+  for (let i = 0; i < 4000; i++) { g.fillStyle = r() > 0.5 ? '#000' : '#fff'; g.fillRect(r() * W, r() * H, 1 + r() * 8, 1); }
   g.globalAlpha = 1;
-  // gold hem band (bottom of lathe == low v)
-  const gold = white ? '#c9b98f' : '#e8b85c';
-  g.fillStyle = gold; g.fillRect(0, H - 34, W, 34);
-  g.fillStyle = white ? '#9c8b64' : '#8c3a14';
-  for (let x = 0; x < W; x += 16) { g.beginPath(); g.moveTo(x, H - 34); g.lineTo(x + 8, H - 8); g.lineTo(x + 16, H - 34); g.fill(); }
-  // pale glyph rows
-  g.fillStyle = white ? 'rgba(160,140,100,.55)' : 'rgba(255,224,160,.75)';
-  for (let x = 0; x < W; x += 32) { g.beginPath(); g.arc(x + 16, 120, 4, 0, 7); g.fill(); g.fillRect(x + 8, 140, 16, 2); }
+  const gold = white ? '#cdbd94' : '#e9b65a', goldDark = white ? '#9c8b64' : '#7d2e10';
+  // gold hem band (canvas bottom == hem)
+  g.fillStyle = gold; g.fillRect(0, H - 30, W, 30);
+  g.fillStyle = goldDark;
+  for (let x = 0; x < W; x += 16) { g.beginPath(); g.moveTo(x, H - 30); g.lineTo(x + 8, H - 9); g.lineTo(x + 16, H - 30); g.fill(); }
+  g.fillRect(0, H - 34, W, 3);
+  // front band: centred on u = 0, so it wraps across both edges of the canvas
+  const band = (cx) => {
+    const bw = 34;
+    g.fillStyle = gold; g.fillRect(cx - bw / 2, 0, bw, H);
+    g.fillStyle = goldDark; g.fillRect(cx - bw / 2 + 3, 0, 2, H); g.fillRect(cx + bw / 2 - 5, 0, 2, H);
+    g.strokeStyle = goldDark; g.lineWidth = 2.5;
+    for (let y = 22; y < H - 40; y += 30) {
+      g.beginPath(); g.moveTo(cx, y - 10); g.lineTo(cx + 9, y); g.lineTo(cx, y + 10); g.lineTo(cx - 9, y); g.closePath(); g.stroke();
+      g.beginPath(); g.arc(cx, y, 2.5, 0, 7); g.fillStyle = goldDark; g.fill();
+    }
+  };
+  band(0); band(W);
+  // pale stitched glyph row at the waist
+  g.fillStyle = white ? 'rgba(160,140,100,.5)' : 'rgba(255,214,150,.55)';
+  for (let x = 40; x < W - 40; x += 28) { g.beginPath(); g.arc(x, 150, 3, 0, 7); g.fill(); g.fillRect(x - 7, 162, 14, 2); }
   const t = tex(c); t.wrapS = THREE.RepeatWrapping; return t;
 }
 

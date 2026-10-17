@@ -18,6 +18,8 @@ import { ParticlePool, AmbientDust } from './particles.js';
 import { AudioEngine } from './audio.js';
 import { drawMural } from './murals.js';
 import { makeSoftDot } from './textures.js';
+import { makeGodRaysPass, makeGradePass } from './post.js';
+import { Companion } from './companion.js';
 
 window.addEventListener('error', (e) => { $('err').textContent += (e.message || e) + '\n'; });
 function $(id) { return document.getElementById(id); }
@@ -43,7 +45,7 @@ scene.add(sunLight, sunLight.target, hemi);
 const ruins = new Ruins(scene);
 const sandU = makeSandUniforms();
 const nearMat = makeSandMaterial(sandU);
-const farMat = makeSandMaterial(sandU, 0.4);
+const farMat = makeSandMaterial(sandU, 0.7);
 const terrain = new Terrain(scene, nearMat);
 const far = buildFarTerrain(farMat);
 scene.add(far);
@@ -56,7 +58,25 @@ const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
 const bloom = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.4, 0.7, 1.15);
 composer.addPass(bloom);
+const rays = makeGodRaysPass();
+composer.addPass(rays);
 composer.addPass(new OutputPass());
+const grade = makeGradePass();
+composer.addPass(grade);
+const _sunNdc = new THREE.Vector3(), _camFwd = new THREE.Vector3();
+function updatePost(time) {
+  const pal = env.pal;
+  camera.getWorldDirection(_camFwd);
+  const facing = _camFwd.dot(pal.sun);
+  _sunNdc.copy(pal.sun).multiplyScalar(1000).add(camera.position).project(camera);
+  rays.uniforms.uSun.value.set(_sunNdc.x * 0.5 + 0.5, _sunNdc.y * 0.5 + 0.5);
+  rays.uniforms.uStrength.value = facing > 0 ? pal.rays * smooth(0.05, 0.55, facing) * 0.4 : 0;
+  rays.uniforms.uColor.value.copy(pal.sunC);
+  rays.uniforms.uAspect.value = camera.aspect;
+  grade.uniforms.uTime.value = time;
+  grade.uniforms.uSat.value = 1.1 + 0.08 * (1 - pal.snow);
+  grade.uniforms.uFade.value = game.whiteout * 0.35;
+}
 
 const sparkles = new ParticlePool(scene, 1400, true);
 const dustPool = new ParticlePool(scene, 800, false);
@@ -73,12 +93,15 @@ const audio = new AudioEngine();
 const env = { sunDir: new THREE.Vector3(), pal: null, progress: 0 };
 
 const props = new Props(scene, ruins, fx);
+props._camPos = camera.position;
 const flyers = new Flyers(scene);
 for (const [z, n] of [[-210, 3], [-330, 2], [-480, 3], [-620, 2], [-780, 2], [-900, 2], [-1130, 3], [-1260, 4], [-1400, 3], [-1650, 2], [-1850, 2]]) flyers.spawn(pathX(z), z, n);
 const introBanner = props.banners.find((b) => Math.abs(b.center.z + 140) < 40);
 const guardians = [0.402, 0.60, 0.675].map((p) => { const z = zAtProgress(p); return new Guardian(scene, pathX(z), z, 48); });
+const companion = new Companion(scene, ruins.colliders, ruins.shelters);
 
 // ------------------------------------------------------------------ palette
+const ROCK_DESERT = new THREE.Color('#5a4a42'), ROCK_CAVE = new THREE.Color('#14243a'), ROCK_SNOW = new THREE.Color('#4a5670');
 function applyPalette(p) {
   const pal = samplePalette(p);
   env.pal = pal; env.sunDir.copy(pal.sun); env.progress = p;
@@ -87,12 +110,13 @@ function applyPalette(p) {
   u.uSunColor.value.copy(pal.sunC).multiplyScalar(pal.sunI * 0.4);
   u.uLit.value.copy(pal.lit); u.uHi.value.copy(pal.hi); u.uShade.value.copy(pal.shade);
   u.uRim.value.copy(pal.rim); u.uGlit.value.copy(pal.glit); u.uFog.value.copy(pal.fog); u.uAmb.value.copy(pal.amb);
-  u.uSnow.value = pal.snow; u.uCave.value = pal.cave; u.uGlitterGain.value = 1 - 0.7 * pal.cave;
+  u.uSnow.value = pal.snow; u.uCave.value = pal.cave; u.uGlitterGain.value = 1 - 0.88 * pal.cave;
+  u.uRock.value.copy(ROCK_DESERT).lerp(ROCK_CAVE, pal.cave).lerp(ROCK_SNOW, pal.snow * (1 - pal.cave));
   nearMat.uniforms.uFogD.value = pal.fogD;
   farMat.uniforms.uFogD.value = pal.fogD * farMat.userData.fogScale;
   const su = sky.uniforms;
   su.uTop.value.copy(pal.top); su.uHor.value.copy(pal.hor); su.uGround.value.copy(pal.fog);
-  su.uSunDir.value.copy(pal.sun); su.uSunColor.value.copy(pal.sunC); su.uSunI.value = pal.sunI;
+  su.uSunDir.value.copy(pal.sun); su.uSunColor.value.copy(pal.sunC); su.uSunI.value = pal.sunI; su.uOvercast.value = smooth(0.8, 1.0, p) * 0.9 + pal.snow * 0.25;
   renderer.toneMappingExposure = pal.exp;
   bloom.strength = pal.bloom;
   scene.fog.color.copy(pal.fog); scene.fog.density = pal.fogD;
@@ -100,9 +124,10 @@ function applyPalette(p) {
   sunLight.position.copy(pal.sun).multiplyScalar(100).add(player.pos);
   sunLight.target.position.copy(player.pos);
   hemi.color.copy(pal.amb); hemi.groundColor.copy(pal.grd);
-  const s = player.scarf.uniforms;
-  s.uSunDir.value.copy(pal.sun); s.uSunColor.value.copy(pal.sunC).multiplyScalar(pal.sunI * 0.35);
-  s.uAmb.value.copy(pal.amb); s.uFog.value.copy(pal.fog); s.uFogD.value = pal.fogD;
+  for (const s of [player.scarf.uniforms, companion.p.scarf.uniforms]) {
+    s.uSunDir.value.copy(pal.sun); s.uSunColor.value.copy(pal.sunC).multiplyScalar(pal.sunI * 0.35);
+    s.uAmb.value.copy(pal.amb); s.uFog.value.copy(pal.fog); s.uFogD.value = pal.fogD;
+  }
   clothUniforms.uSunDir.value.copy(pal.sun); clothUniforms.uSunColor.value.copy(pal.sunC).multiplyScalar(pal.sunI * 0.35);
   clothUniforms.uAmb.value.copy(pal.amb); clothUniforms.uFog.value.copy(pal.fog); clothUniforms.uFogD.value = pal.fogD;
 }
@@ -124,24 +149,63 @@ function findStart() {
 const [fsx, fsz] = startProgress > 0 ? [0, 0] : findStart();
 const sz = startProgress > 0 ? zAtProgress(startProgress) : fsz;
 const sx = startProgress > 0 ? pathX(sz) : fsx;
-player.teleport(sx, sz);
 player.heading = Math.PI;
+player.teleport(sx, sz);
 cam.yaw = 0;
 terrain.prime(sx, sz, 3);
 for (let i = 0; i < +(q.get('glyphs') ?? 0); i++) player.addGlyph();
 
-const game = { state: 'title', time: 0, visionT: 0, visionIdx: 0, hints: {} };
-window.__game = { player, cam, env, scene, camera, game, terrain, renderer, input, props, guardians, flyers, audio, ruins, summitPoint };
+const game = { state: 'title', time: 0, visionT: 0, visionIdx: 0, hints: {}, singHold: 0, chapter: -1, gust: 0, gustT: 14, gustDir: new THREE.Vector3(), whiteout: 0 };
+
+// ------------------------------------------------------------------ settings (persisted per browser)
+const settings = { sens: 1, invertY: false, volume: 0.85 };
+try { Object.assign(settings, JSON.parse(localStorage.getItem('journey-settings') || '{}')); } catch (e) { /* storage unavailable */ }
+function applySettings() {
+  cam.sens = settings.sens; cam.invertY = settings.invertY; audio.setVolume && audio.setVolume(settings.volume);
+  try { localStorage.setItem('journey-settings', JSON.stringify(settings)); } catch (e) { /* storage unavailable */ }
+}
+applySettings();
+window.__THREE = THREE;
+window.__game = { companion, player, cam, env, scene, camera, game, terrain, renderer, input, props, guardians, flyers, audio, ruins, summitPoint };
 
 const SAND = new THREE.Color();
 const tmp = new THREE.Vector3();
 const flashEl = $('fade');
 
+const hintQueue = [];
+let hintBusy = false;
 function showHint(key, html, ms = 7000) {
   if (game.hints[key]) return;
   game.hints[key] = true;
-  const h = $('hint'); h.innerHTML = html; h.style.opacity = 1;
-  clearTimeout(showHint.t); showHint.t = setTimeout(() => { h.style.opacity = 0; }, ms);
+  hintQueue.push([html, ms]);
+  if (!hintBusy) nextHint();
+}
+function nextHint() {
+  const h = $('hint');
+  const item = hintQueue.shift();
+  if (!item) { hintBusy = false; return; }
+  hintBusy = true;
+  h.innerHTML = item[0]; h.style.opacity = 1;
+  setTimeout(() => { h.style.opacity = 0; setTimeout(nextHint, 1600); }, item[1]);
+}
+
+// ------------------------------------------------------------------ chapter titles
+const CHAPTERS = [
+  { p: 0.0, n: 'I', name: 'The Dunes' },
+  { p: 0.30, n: 'II', name: 'The Sunken City' },
+  { p: 0.515, n: 'III', name: 'The Depths' },
+  { p: 0.745, n: 'IV', name: 'The Ascent' },
+];
+function updateChapter(prog) {
+  let idx = -1;
+  for (let i = 0; i < CHAPTERS.length; i++) if (prog >= CHAPTERS[i].p) idx = i;
+  if (idx > game.chapter) {
+    game.chapter = idx;
+    const c = CHAPTERS[idx], el = $('chapter');
+    el.innerHTML = `<span>${c.n}</span>${c.name}`;
+    el.classList.remove('show'); void el.offsetWidth; el.classList.add('show');
+    audio.chapter();
+  }
 }
 
 function processEvents(evs) {
@@ -166,7 +230,7 @@ function playerFx(dt, time) {
     const type = typeof e === 'string' ? e : e.type;
     if (type === 'step') {
       audio.step();
-      for (let i = 0; i < 3; i++) dustPool.emit(p.x + (Math.random() - .5) * .3, p.y + 0.1, p.z + (Math.random() - .5) * .3,
+      for (let i = 0; i < 3; i++) dustPool.emit(e.x + (Math.random() - .5) * .2, terrainHeight(e.x, e.z) + 0.08, e.z + (Math.random() - .5) * .2,
         (Math.random() - .5) * .8, 0.4 + Math.random() * .6, (Math.random() - .5) * .8, 0.9, 0.35, SAND.r, SAND.g, SAND.b, 0.35, 2.5, -0.3, 1.2);
     } else if (type === 'jump') audio.jump();
     else if (type === 'land') {
@@ -192,19 +256,118 @@ function playerFx(dt, time) {
     const a = player.scarf.pts[2 + ((Math.random() * (player.scarf.n - 2)) | 0)];
     sparkles.emit(a.x, a.y, a.z, (Math.random() - .5) * .4, 0.2 + Math.random() * 0.4, (Math.random() - .5) * .4, 0.8, 0.08, 3, 2.3, 1.2, 0.9, 1, 0, -0.3);
   }
-  // singing: rings of light spill outward
-  if (player.singing) {
-    playerFx.ringT = (playerFx.ringT ?? 0) - dt;
-    if (playerFx.ringT <= 0) {
-      playerFx.ringT = 0.22;
-      const r = 3.2 + 3 * player.sing;
-      for (let i = 0; i < 16; i++) {
-        const a = i / 16 * Math.PI * 2;
-        sparkles.emit(p.x, p.y + 1.1, p.z, Math.cos(a) * r, 0.4, Math.sin(a) * r, 1.2, 0.12, 3, 2.4, 1.4, 0.9, 1.6, 0, -0.4);
+  singRings(player, dt);
+  // a held song released bursts outward in one big ring that carries much further
+  if (player.singing) game.singHold += dt;
+  else {
+    if (game.singHold > 0.9) shout(player.pos);
+    game.singHold = 0;
+  }
+}
+
+function singRings(who, dt, big = false) {
+  if (!who.singing || !who.group.visible) return;
+  const p = who.pos;
+  who._ringT = (who._ringT ?? 0) - dt;
+  if (who._ringT > 0) return;
+  who._ringT = 0.22;
+  const r = 3.2 + 3 * who.sing;
+  for (let i = 0; i < 16; i++) {
+    const a = i / 16 * Math.PI * 2;
+    sparkles.emit(p.x, p.y + 1.1, p.z, Math.cos(a) * r, 0.4, Math.sin(a) * r, 1.2, 0.12, 3, 2.4, 1.4, 0.9, 1.6, 0, -0.4);
+  }
+  sparkles.emit(p.x, p.y + 2.1, p.z, 0, 1.4, 0, 1.8, 0.5, 2.4, 1.8, 0.9, 0.55, 1.2, 0, 0.8);
+}
+
+function shout(p) {
+  audio.shout();
+  for (let i = 0; i < 48; i++) {
+    const a = i / 48 * Math.PI * 2;
+    sparkles.emit(p.x, p.y + 1.0, p.z, Math.cos(a) * 11, 0.9, Math.sin(a) * 11, 1.5, 0.22, 3, 2.6, 1.6, 1, 1.1, 0, -0.3);
+    sparkles.emit(p.x, p.y + 1.6, p.z, Math.cos(a) * 6, 2.2, Math.sin(a) * 6, 1.3, 0.14, 2.6, 2.0, 1.2, 0.8, 1.4, 0, -0.2);
+  }
+  props.wake(p, 48, fx);
+  cam.shake = Math.max(cam.shake, 0.25);
+}
+
+// ------------------------------------------------------------------ the other traveler
+const _pan = new THREE.Vector3();
+function companionEvents(evs) {
+  const c = companion.p;
+  for (const e of evs) {
+    if (e.type === 'chirp') {
+      _pan.copy(c.pos).project(camera);
+      audio.chirp(clamp(_pan.x, -1, 1) * (_pan.z < 1 ? 1 : -1), e.dist, e.big);
+      if (e.big) shoutFrom(c);
+      // a chirp answered close by fills the listener's scarf
+      if (e.dist < 14 && !player.frozen) {
+        player.charge = Math.min(1, player.charge + (e.big ? 0.8 : 0.35));
+        player.flash = Math.max(player.flash, 0.5);
+        for (let i = 0; i < 18; i++) {
+          const t = Math.random();
+          sparkles.emit(c.pos.x + (player.pos.x - c.pos.x) * t, c.pos.y + 1.2 + Math.sin(t * Math.PI) * 1.5, c.pos.z + (player.pos.z - c.pos.z) * t,
+            (Math.random() - .5) * .5, 0.6, (Math.random() - .5) * .5, 1.0, 0.13, 3, 2.4, 1.4, 1, 1.2, 0, -0.3);
+        }
+        audio.recharge();
       }
-      sparkles.emit(p.x, p.y + 2.1, p.z, 0, 1.4, 0, 1.8, 0.5, 2.4, 1.8, 0.9, 0.55, 1.2, 0, 0.8);
+    } else if (e.type === 'met') {
+      showHint('met', 'Another traveler. Walk together — singing close by fills each other\'s scarves.', 8000);
+    } else if (e.type === 'join') {
+      showHint('companion', 'You are not alone. <b>Sing</b> to call to them.', 7000);
+    } else if (e.type === 'share') {
+      if (Math.random() < 0.12) {
+        const a = player.scarf.pts[1 + ((Math.random() * (player.scarf.n - 1)) | 0)];
+        sparkles.emit(a.x, a.y, a.z, 0, 0.5, 0, 0.8, 0.09, 3, 2.3, 1.2, 1, 1, 0, -0.4);
+      }
     }
   }
+}
+function shoutFrom(who) {
+  const p = who.pos;
+  for (let i = 0; i < 32; i++) {
+    const a = i / 32 * Math.PI * 2;
+    sparkles.emit(p.x, p.y + 1.0, p.z, Math.cos(a) * 9, 0.8, Math.sin(a) * 9, 1.4, 0.18, 3, 2.5, 1.5, 1, 1.1, 0, -0.3);
+  }
+}
+
+// ------------------------------------------------------------------ mountain wind: gusts that push the traveler back down the slope
+function updateGusts(dt, prog) {
+  const cold = smooth(0.78, 0.9, prog);
+  if (cold <= 0 || game.state !== 'playing') { game.gust = Math.max(0, game.gust - dt); return 0; }
+  game.gustT -= dt;
+  if (game.gustT <= 0 && game.gust <= 0) {
+    game.gust = 3.4;
+    game.gustT = 9 + Math.random() * 7 - cold * 3;
+    audio.gust(0.6 + cold * 0.6);
+    showHint('gust', 'The wind is fierce here. Shelter behind the standing stones.', 7000);
+  }
+  if (game.gust > 0) {
+    game.gust -= dt;
+    const k = Math.sin(clamp(1 - game.gust / 3.4, 0, 1) * Math.PI) * cold;   // swell and fade
+    // the wind pours down from the summit
+    const dx = -WIND.x, dz = -WIND.z;
+    for (const who of [player, companion.p]) {
+      if (!who.group.visible || who.frozen) continue;
+      if (windShelter(who.pos, dx, dz)) continue;
+      who.vel.x += dx * 13 * k * dt; who.vel.z += dz * 13 * k * dt;
+      if (!who.grounded) who.vel.y -= 4 * k * dt;
+    }
+    cam.shake = Math.max(cam.shake, 0.4 * k);
+    return k;
+  }
+  return 0;
+}
+/** Is there stone just upwind (toward the summit) of this point? */
+function windShelter(p, dx, dz) {
+  for (const c of ruins.colliders) {
+    if (p.y > c.top + 0.5) continue;
+    const ox = c.x - p.x, oz = c.z - p.z;
+    const along = -(ox * dx + oz * dz);              // positive when the stone is upwind
+    if (along < 0 || along > 6) continue;
+    const lat = Math.abs(ox * dz - oz * dx);
+    if (lat < (c.r ?? Math.max(c.hx, c.hz)) + 0.9) return true;
+  }
+  return false;
 }
 
 // ------------------------------------------------------------------ visions at shrines
@@ -230,6 +393,7 @@ const ending = { t: 0, figures: [], from: new THREE.Vector3(), phase: 0, collaps
 function startEnding() {
   game.state = 'ending'; ending.t = 0; ending.phase = 0;
   player.frozen = true; $('hint').style.opacity = 0;
+  companion.p.setVisible(false); companion.state = 'gone';
   flashEl.style.transition = 'none'; flashEl.style.background = '#fff'; flashEl.style.opacity = 0;
   const white = buildTraveler({ white: true });
   for (let i = 0; i < 6; i++) {
@@ -293,11 +457,28 @@ function updateEnding(dt, time) {
     if (u >= 1 && game.state === 'ending') {
       game.state = 'end';
       const end = $('end'); end.style.opacity = 1; end.style.pointerEvents = 'auto';
+      const found = props.glyphs.filter((g) => g.taken).length;
+      $('endStats').textContent = `symbols found  ${found} / ${props.glyphs.length}` + (companion.met ? '  ·  you travelled with a companion' : '');
     }
   }
   player.collapse = ending.collapse;
   player.update(dt, { mx: 0, my: 0, jump: false, jumpPressed: false, sing: false }, cam.yaw, time, env);
   if (!player.scripted) player.pos.y = terrainHeight(player.pos.x, player.pos.z);
+}
+
+// ------------------------------------------------------------------ where the traveler's hood turns
+const _lt = new THREE.Vector3();
+function pickLookTarget() {
+  const p = player.pos;
+  let best = 1e9, found = false;
+  const consider = (x, y, z, range, weight = 1) => {
+    const d = Math.hypot(x - p.x, z - p.z);
+    if (d < range && d * weight < best) { best = d * weight; _lt.set(x, y, z); found = true; }
+  };
+  if (companion.visible) consider(companion.pos.x, companion.pos.y + 1.4, companion.pos.z, 20, 0.7);
+  for (const g of props.glyphs) if (!g.taken) consider(g.spr.position.x, g.spr.position.y, g.spr.position.z, 24);
+  for (const s of ruins.shrines) if (!s.seen) consider(s.x, s.y + 7, s.z, 40, 1.2);
+  return found ? _lt : null;
 }
 
 // ------------------------------------------------------------------ main loop
@@ -306,9 +487,11 @@ function frame(nowMs, doRender = true) {
   if (!(dt > 0)) dt = 0.016;               // first frame / non-monotonic clocks
   dt = Math.min(dt, 0.05);
   frame.last = nowMs;
+  const inp = input.poll();
+  if (inp.pausePressed && (game.state === 'playing' || game.state === 'paused')) togglePause();
+  if (game.state === 'paused') { if (doRender) composer.render(); return; }
   game.time += dt;
   const time = game.time;
-  const inp = input.poll();
 
   const prog = progressAt(player.pos.z);
   applyPalette(prog);
@@ -320,9 +503,15 @@ function frame(nowMs, doRender = true) {
     const frozen = game.state === 'vision';
     cam.update(dt, player, frozen ? { lookX: 0, lookY: 0 } : inp, time, {});
     player.cold = smooth(0.74, 0.95, prog);
-    if (!frozen) cam.shake = Math.max(cam.shake, 0.25 * player.cold);
+    if (!frozen) cam.shake = Math.max(cam.shake, 0.12 * player.cold);
+    if (inp.zoom) cam.baseDist = clamp(cam.baseDist + inp.zoom * 0.6, 5, 13);
+    player.lookTarget = pickLookTarget();
     player.update(dt, frozen ? { mx: 0, my: 0, jump: false, jumpPressed: false, sing: false } : inp, cam.yaw, time, env);
     playerFx(dt, time);
+    companionEvents(companion.update(dt, time, player, env, camera, frozen));
+    singRings(companion.p, dt);
+    game.whiteout = updateGusts(dt, prog);
+    updateChapter(prog);
     evs.push(...props.update(dt, time, player, env, fx));
     flyers.update(dt, time, player, fx, evs);
     let nearestG = 999;
@@ -373,16 +562,22 @@ function frame(nowMs, doRender = true) {
   ruins.update(env.sunDir, smooth(0.30, 0.42, prog) * (1 - smooth(0.52, 0.60, prog)) + smooth(0.99, 1.0, prog) * 0);
 
   sandU.uTime.value = time; sky.uniforms.uTime.value = time;
+  // light pools under the nearest shafts in the depths
+  if (env.pal.cave > 0.01) {
+    const near = props.shafts.map((sh) => [Math.hypot(sh.x - player.pos.x, sh.z - player.pos.z), sh]).sort((a, b) => a[0] - b[0]);
+    sandU.uPools.value.forEach((v, i) => { const sh = near[i] && near[i][1]; if (sh) v.set(sh.x, sh.z, sh.r * 0.9, 1); else v.set(0, 0, 1, 0); });
+  }
   sky.mesh.position.copy(camera.position);
   summit.userData.update(camera, 1);
 
   const pal = env.pal, snow = pal.snow;
-  const wind = 4 + snow * 12;
-  ambient.update(dt, time, camera, renderer, player.pos.y, { x: WIND.x * wind, z: WIND.z * wind }, snow * 2.5, clamp(pal.dust * 0.5, 0, 1) * (1 - 0.6 * pal.cave),
+  const wind = 4 + snow * 12 + game.whiteout * 26;
+  ambient.update(dt, time, camera, renderer, player.pos.y, { x: WIND.x * wind, z: WIND.z * wind }, snow * 2.5, clamp(pal.dust * 0.5, 0, 1) * (1 - 0.75 * pal.cave),
     snow > 0.5 ? new THREE.Color(1, 1, 1) : SAND, snow > 0.5 ? 0.12 : 0.07, 0.55);
   sparkles.update(dt, camera, renderer);
   dustPool.update(dt, camera, renderer);
 
+  updatePost(time);
   if (doRender) composer.render();
 }
 function loop(t) { frame(t); requestAnimationFrame(loop); }
@@ -393,6 +588,17 @@ window.__advance = (sec, step = 1 / 30) => {
   let t = frame.last ?? performance.now();
   for (let i = 0; i < n; i++) { t += step * 1000; frame(t, i === n - 1); }
   frame.last = undefined;
+};
+
+// debug: jump the traveler somewhere and frame it ({p, dx, yaw, pitch, dist}); used for visual checks
+window.__view = ({ p = null, dx = 0, yaw = null, pitch = null, dist = null, t = 1.5 } = {}) => {
+  for (const id of ['title', 'hint']) $(id).style.display = 'none';
+  if (p !== null) { const z = zAtProgress(p); player.teleport(pathX(z) + dx, z); terrain.prime(player.pos.x, z, 3); }
+  if (dist !== null) cam.baseDist = dist;
+  if (yaw !== null) { cam.yaw = yaw; cam.idle = -1e9; }
+  if (pitch !== null) cam.pitch = pitch;
+  cam.ready = false;
+  __advance(t);
 };
 
 window.addEventListener('resize', () => {
@@ -410,8 +616,33 @@ function begin() {
   game.state = 'playing';
   const t = $('title'); t.style.opacity = 0; t.style.pointerEvents = 'none';
   setTimeout(() => { t.style.display = 'none'; }, 2400);
-  showHint('controls', '<b>W A S D</b> walk &nbsp;·&nbsp; <b>drag</b> look &nbsp;·&nbsp; <b>space</b> hold to fly &nbsp;·&nbsp; <b>E</b> / <b>right-click</b> sing<br>Walk toward the mountain.', 14000);
+  input.allowLock = true;
+  setTimeout(() => showHint('controls', '<b>W A S D</b> walk &nbsp;·&nbsp; <b>mouse</b> look &nbsp;·&nbsp; <b>space</b> jump, hold to fly &nbsp;·&nbsp; <b>E</b> / <b>right-click</b> sing<br>Walk toward the light on the mountain.', 12000), 4200);
 }
+
+// ------------------------------------------------------------------ pause menu
+function togglePause(force) {
+  const now = performance.now();
+  if (now - (togglePause.t ?? 0) < 300) return;      // Esc both releases pointer lock and arrives as a key press
+  togglePause.t = now;
+  const pause = force ?? game.state !== 'paused';
+  const el = $('pause');
+  if (pause && game.state === 'playing') {
+    game.state = 'paused'; el.classList.add('show'); audio.duck && audio.duck(true);
+    if (document.pointerLockElement) document.exitPointerLock();
+  } else if (!pause && game.state === 'paused') {
+    game.state = 'playing'; el.classList.remove('show'); audio.duck && audio.duck(false);
+    frame.last = undefined;
+  }
+}
+$('resume').addEventListener('click', () => togglePause(false));
+const sensEl = $('sens'), invEl = $('invert'), volEl = $('volume');
+sensEl.value = settings.sens; invEl.checked = settings.invertY; volEl.value = settings.volume;
+sensEl.addEventListener('input', () => { settings.sens = +sensEl.value; applySettings(); });
+invEl.addEventListener('change', () => { settings.invertY = invEl.checked; applySettings(); });
+volEl.addEventListener('input', () => { settings.volume = +volEl.value; applySettings(); });
+// losing pointer lock mid-game (Esc) opens the menu
+document.addEventListener('pointerlockchange', () => { if (!document.pointerLockElement && game.state === 'playing' && input.lockedOnce) togglePause(true); });
 startBtn.addEventListener('click', begin);
 window.addEventListener('keydown', (e) => { if (game.state === 'title' && (e.code === 'Enter' || e.code === 'Space')) begin(); });
 if (q.has('auto')) begin();

@@ -21,7 +21,7 @@ export class Ruins {
     this.stone = new THREE.MeshStandardMaterial({ color: 0xd9b98c, roughness: 0.96, metalness: 0, bumpMap: bump, bumpScale: 2.2, emissive: 0x4a2a14, emissiveIntensity: 0.55 });
     this.stoneDark = new THREE.MeshStandardMaterial({ color: 0xb08a62, roughness: 0.96, bumpMap: bump, bumpScale: 2.0, emissive: 0x3a2010, emissiveIntensity: 0.55 });
     this.gold = new THREE.MeshStandardMaterial({ color: 0xe8b860, roughness: 0.5, metalness: 0.5, emissive: 0x6a3a08, emissiveIntensity: 0.8 });
-    this.rock = new THREE.MeshStandardMaterial({ color: 0x40566c, roughness: 1, bumpMap: bump, bumpScale: 3 });
+    this.rock = new THREE.MeshStandardMaterial({ color: 0x24364a, roughness: 1, bumpMap: bump, bumpScale: 3, emissive: 0x06101c, emissiveIntensity: 1 });
     this.shadowMat = new THREE.MeshBasicMaterial({ color: 0x30101a, transparent: true, opacity: 0.5, depthWrite: false, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3, fog: false });
     this._tmp = new THREE.Matrix4();
     this._S = new THREE.Matrix4();

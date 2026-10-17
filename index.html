@@ -28,6 +28,23 @@
   #end h2 { font-weight: 200; letter-spacing: .5em; font-size: clamp(20px, 3.4vw, 40px); margin: 0 0 18px .5em; }
   #end p { font-size: 13px; letter-spacing: .3em; opacity: .7; margin: 6px 0; text-transform: uppercase; }
   #loading { position: absolute; bottom: 90px; font-size: 11px; letter-spacing: .4em; text-transform: uppercase; opacity: .55; }
+  #chapter { position: fixed; left: 0; right: 0; top: 18%; text-align: center; color: #fff4e0; z-index: 5; pointer-events: none; opacity: 0;
+    font-weight: 200; font-size: clamp(18px, 2.6vw, 30px); letter-spacing: .55em; text-transform: uppercase; text-shadow: 0 0 30px rgba(255,190,110,.6), 0 1px 10px rgba(60,20,0,.5); }
+  #chapter span { display: block; font-size: .5em; letter-spacing: .8em; opacity: .7; margin-bottom: 12px; }
+  #chapter.show { animation: chapter 7.5s ease forwards; }
+  @keyframes chapter { 0% { opacity: 0; transform: translateY(8px); filter: blur(6px); } 22% { opacity: 1; transform: none; filter: none; } 70% { opacity: 1; } 100% { opacity: 0; filter: blur(4px); } }
+  #pause { z-index: 20; background: radial-gradient(ellipse at 50% 50%, rgba(40,18,8,.55), rgba(15,6,3,.85)); opacity: 0; pointer-events: none; transition: opacity .5s ease; }
+  #pause.show { opacity: 1; pointer-events: auto; }
+  #pause h2 { font-weight: 200; letter-spacing: .6em; margin: 0 0 30px .6em; font-size: 26px; }
+  #pause .row { display: flex; align-items: center; justify-content: space-between; gap: 24px; width: min(360px, 80vw); margin: 9px 0; font-size: 12px; letter-spacing: .25em; text-transform: uppercase; opacity: .85; }
+  #pause input[type=range] { width: 160px; accent-color: #e9b65a; }
+  #pause input[type=checkbox] { accent-color: #e9b65a; width: 16px; height: 16px; }
+  #pause .keys { margin-top: 26px; font-size: 11px; line-height: 2; letter-spacing: .18em; opacity: .6; }
+  #pause .keys b { color: #ffd48a; font-weight: 600; }
+  #resume { margin-top: 26px; }
+  .btn { appearance: none; background: transparent; color: #ffe9c8; border: 1px solid rgba(255,225,180,.55); padding: 13px 40px; letter-spacing: .5em; font-size: 12px; text-transform: uppercase; cursor: pointer; transition: all .5s; }
+  .btn:hover { background: rgba(255,220,160,.14); box-shadow: 0 0 40px rgba(255,190,100,.35); }
+  #endStats { margin-top: 26px !important; font-size: 11px !important; letter-spacing: .3em; opacity: .55 !important; }
   #err { position: fixed; top: 12px; left: 12px; right: 12px; color: #ffb4a0; font: 12px monospace; white-space: pre-wrap; z-index: 99; pointer-events: none; }
 </style>
 </head>
@@ -36,7 +53,16 @@
 <div id="hint"></div>
 <div id="vision"><canvas id="mural"></canvas></div>
 <div id="fade"></div>
-<div id="end" class="overlay"><h2>THANK YOU FOR TRAVELLING</h2><p>press any key to journey again</p></div>
+<div id="chapter"></div>
+<div id="end" class="overlay"><h2>THANK YOU FOR TRAVELLING</h2><p>press any key to journey again</p><p id="endStats"></p></div>
+<div id="pause" class="overlay">
+  <h2>PAUSED</h2>
+  <label class="row">Look sensitivity <input id="sens" type="range" min="0.3" max="2.5" step="0.05"></label>
+  <label class="row">Invert vertical look <input id="invert" type="checkbox"></label>
+  <label class="row">Volume <input id="volume" type="range" min="0" max="1" step="0.01"></label>
+  <div class="keys"><b>W A S D</b> walk · <b>mouse</b> look · <b>wheel</b> zoom<br><b>space</b> jump — hold to fly on your scarf<br><b>E</b> / <b>right-click</b> sing — hold and release to call out<br><b>Esc</b> pause</div>
+  <button id="resume" class="btn">Resume</button>
+</div>
 <div id="title" class="overlay">
   <h1>JOURNEY</h1>
   <div class="sub">a three.js tribute</div>

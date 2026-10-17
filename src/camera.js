@@ -1,7 +1,9 @@
 import * as THREE from 'three';
 import { terrainHeight, clamp } from './world/heightfield.js';
 
-/** Third-person camera that drifts behind the traveler, with manual orbit. */
+const exp = (k, dt) => 1 - Math.exp(-k * dt);
+
+/** Third-person camera that drifts behind the traveler, with manual orbit, terrain avoidance and look-ahead. */
 export class ChaseCamera {
   constructor(camera) {
     this.camera = camera;
@@ -12,8 +14,16 @@ export class ChaseCamera {
     this.shake = 0;
     this.fov = 58;
     this.restPitch = 0.2;
+    this.baseDist = 8;
+    this.sens = 1;
+    this.invertY = false;
     this.target = new THREE.Vector3();
+    this.ahead = new THREE.Vector3();
+    this.focusY = 0;
+    this.lift = 0;              // extra pitch pushed in by terrain occlusion
+    this.yawVel = 0; this.pitchVel = 0;
     this.ready = false;
+    this._want = new THREE.Vector3();
   }
 
   snap(player) {
@@ -22,37 +32,68 @@ export class ChaseCamera {
   }
 
   update(dt, player, look, time, extra = {}) {
-    const lx = look.lookX, ly = look.lookY;
+    const lx = look.lookX || 0, ly = (look.lookY || 0) * (this.invertY ? -1 : 1);
     if (lx || ly) { this.idle = 0; } else this.idle += dt;
-    this.yaw -= lx * 0.0036;
-    this.pitch = clamp(this.pitch + ly * 0.0030, -0.15, 1.25);
+    // a little inertia on manual orbit so mouse/stick look feels weighty rather than twitchy
+    this.yawVel += (-lx * 0.0034 * this.sens / Math.max(dt, 1e-3) - this.yawVel) * exp(30, dt);
+    this.pitchVel += (ly * 0.0028 * this.sens / Math.max(dt, 1e-3) - this.pitchVel) * exp(30, dt);
+    if (!lx) this.yawVel *= Math.exp(-14 * dt);
+    if (!ly) this.pitchVel *= Math.exp(-14 * dt);
+    this.yaw += this.yawVel * dt;
+    this.pitch = clamp(this.pitch + this.pitchVel * dt, -0.2, 1.2);
 
     const speed = player.speed;
-    if (!extra.noFollow && this.idle > 1.2 && speed > 1.2) {
+    if (!extra.noFollow && this.idle > 1.0 && speed > 1.2) {
       const target = player.heading + Math.PI;
       let d = target - this.yaw; d = Math.atan2(Math.sin(d), Math.cos(d));
-      this.yaw += d * (1 - Math.exp(-0.8 * Math.min(1, speed / 6) * dt));
+      // don't swing round when the traveler walks toward the camera
+      const facingCam = Math.abs(d) > 2.4 ? 0.15 : 1;
+      this.yaw += d * exp(0.9 * Math.min(1, speed / 6) * facingCam, dt);
     }
     if (this.idle > 2.0) {
-      const rp = this.restPitch + (player.flying ? 0.12 : 0) + (player.surfing ? -0.04 : 0);
-      this.pitch += (rp - this.pitch) * (1 - Math.exp(-0.7 * dt));
+      const rp = this.restPitch + (player.flying ? 0.14 : 0) + (player.surfing ? -0.05 : 0);
+      this.pitch += (rp - this.pitch) * exp(0.7, dt);
     }
 
-    const wantDist = (extra.dist ?? 8) + Math.min(5, speed * 0.16) + (player.flying ? 2.2 : 0);
-    this.dist += (wantDist - this.dist) * (1 - Math.exp(-2 * dt));
+    const wantDist = (extra.dist ?? this.baseDist) + Math.min(4.5, speed * 0.15) + (player.flying ? 2.4 : 0);
+    this.dist += (wantDist - this.dist) * exp(2, dt);
 
+    // focus point: the traveler, led slightly in the direction of travel; vertical motion is softened so jumps
+    // don't yank the horizon
     const pp = extra.focus || player.pos;
-    this.target.set(pp.x, pp.y + (extra.height ?? 1.5), pp.z);
-    const cp = Math.cos(this.pitch);
-    const want = new THREE.Vector3(
-      this.target.x + Math.sin(this.yaw) * cp * this.dist,
-      this.target.y + Math.sin(this.pitch) * this.dist,
-      this.target.z + Math.cos(this.yaw) * cp * this.dist);
+    const v = player.vel;
+    this.ahead.x += (v.x * 0.22 - this.ahead.x) * exp(2.5, dt);
+    this.ahead.z += (v.z * 0.22 - this.ahead.z) * exp(2.5, dt);
+    if (!this.ready) this.focusY = pp.y;
+    const yRate = player.grounded ? 9 : player.flying ? 3.5 : 2.2;
+    this.focusY += (pp.y - this.focusY) * exp(yRate, dt);
+    if (Math.abs(pp.y - this.focusY) > 6) this.focusY = pp.y - Math.sign(pp.y - this.focusY) * 6;
+    this.target.set(pp.x + this.ahead.x, this.focusY + (extra.height ?? 1.5), pp.z + this.ahead.z);
+
+    // terrain occlusion: if a dune would hide the traveler, raise the camera over it
+    const pitch = this.pitch;
+    const cp = Math.cos(pitch);
+    const dx = Math.sin(this.yaw) * cp, dy = Math.sin(pitch), dz = Math.cos(this.yaw) * cp;
+    let need = 0;
+    for (let i = 1; i <= 6; i++) {
+      const t = i / 6 * this.dist;
+      const x = this.target.x + dx * t, y = this.target.y + dy * t, z = this.target.z + dz * t;
+      const clear = terrainHeight(x, z) + 0.8 - y;
+      if (clear > 0) need = Math.max(need, Math.atan2(clear, t) + 0.02);
+    }
+    need = Math.min(0.9, need);
+    this.lift += (need - this.lift) * exp(need > this.lift ? 5 : 1.0, dt);
+
+    const p2 = this.pitch + this.lift, c2 = Math.cos(p2);
+    const want = this._want.set(
+      this.target.x + Math.sin(this.yaw) * c2 * this.dist,
+      this.target.y + Math.sin(p2) * this.dist,
+      this.target.z + Math.cos(this.yaw) * c2 * this.dist);
     if (!this.ready) { this.pos.copy(want); this.ready = true; }
-    const k = 1 - Math.exp(-(extra.follow ?? 7) * dt);
+    const k = exp(extra.follow ?? 8, dt);
     this.pos.x += (want.x - this.pos.x) * k;
     this.pos.z += (want.z - this.pos.z) * k;
-    this.pos.y += (want.y - this.pos.y) * (1 - Math.exp(-5 * dt));
+    this.pos.y += (want.y - this.pos.y) * exp(6, dt);
     const minY = terrainHeight(this.pos.x, this.pos.z) + 1.0;
     if (this.pos.y < minY) this.pos.y = minY;
 
@@ -66,9 +107,11 @@ export class ChaseCamera {
     const fx = -Math.sin(this.yaw), fz = -Math.cos(this.yaw);
     this.look.set(this.target.x + fx * 3.0, this.target.y + 0.5 - Math.sin(this.pitch) * 1.2, this.target.z + fz * 3.0);
     cam.lookAt(this.look);
+    // a slight roll into fast carves
+    if (player.surfing || player.flying) cam.rotateZ(clamp(-player.turnRate * 0.04, -0.06, 0.06) * Math.min(1, speed / 12));
 
     const wantFov = (extra.fov ?? 58) + Math.min(14, speed * 0.45) + (player.flying ? 3 : 0);
-    this.fov += (wantFov - this.fov) * (1 - Math.exp(-3 * dt));
+    this.fov += (wantFov - this.fov) * exp(3, dt);
     if (Math.abs(cam.fov - this.fov) > 0.02) { cam.fov = this.fov; cam.updateProjectionMatrix(); }
   }
 }

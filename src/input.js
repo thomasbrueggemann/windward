@@ -2,13 +2,16 @@
 export class Input {
   constructor(el) {
     this.keys = new Set();
+    this.zoom = 0;
     this.pressedEdge = new Set();
     this.dragging = false;
     this.lookX = 0; this.lookY = 0;
     this.mouseSing = false;
     this.touch = { mx: 0, my: 0, jump: false, sing: false, id: null, ox: 0, oy: 0, lookId: null, lx: 0, ly: 0 };
     this.enabled = true;
-    this._lastPad = { a: false };
+    this._lastPad = { a: false, start: false };
+    this.allowLock = false;
+    this.lockedOnce = false;
     const k = (e, down) => {
       if (e.repeat) return;
       const c = e.code;
@@ -22,7 +25,13 @@ export class Input {
     el.addEventListener('pointerdown', (e) => {
       if (e.pointerType === 'touch') return;
       if (e.button === 2) this.mouseSing = true; else this.dragging = true;
+      // capture the mouse for free look once the journey has begun
+      if (this.allowLock && e.button === 0 && !document.pointerLockElement && el.requestPointerLock) {
+        try { const r = el.requestPointerLock(); if (r && r.catch) r.catch(() => {}); } catch (err) { /* not allowed here */ }
+      }
     });
+    document.addEventListener('pointerlockchange', () => { if (document.pointerLockElement) this.lockedOnce = true; });
+    window.addEventListener('wheel', (e) => { this.zoom += Math.sign(e.deltaY); }, { passive: true });
     window.addEventListener('pointerup', (e) => { if (e.pointerType === 'touch') return; if (e.button === 2) this.mouseSing = false; else this.dragging = false; });
     window.addEventListener('pointermove', (e) => {
       if (e.pointerType === 'touch') return;
@@ -77,6 +86,7 @@ export class Input {
     let lookX = this.lookX, lookY = this.lookY;
     this.lookX = this.lookY = 0;
     mx += this.touch.mx; my += this.touch.my; jump ||= this.touch.jump; sing ||= this.touch.sing;
+    let padStart = false;
     const pads = navigator.getGamepads ? navigator.getGamepads() : [];
     for (const p of pads) {
       if (!p) continue;
@@ -85,6 +95,8 @@ export class Input {
       lookX += dz(p.axes[2] || 0) * 14; lookY += dz(p.axes[3] || 0) * 10;
       jump ||= !!(p.buttons[0] && p.buttons[0].pressed) || !!(p.buttons[7] && p.buttons[7].pressed);
       sing ||= !!(p.buttons[2] && p.buttons[2].pressed) || !!(p.buttons[1] && p.buttons[1].pressed) || !!(p.buttons[6] && p.buttons[6].pressed);
+      const st = !!(p.buttons[9] && p.buttons[9].pressed);
+      padStart = st && !this._lastPad.start; this._lastPad.start = st;
       break;
     }
     const len = Math.hypot(mx, my);
@@ -92,7 +104,9 @@ export class Input {
     const anyKey = this.pressedEdge.size > 0;
     const jumpPressed = this.pressedEdge.has('Space') || (jump && !this._lastPad.a);
     this._lastPad.a = jump;
+    const pausePressed = this.pressedEdge.has('Escape') || this.pressedEdge.has('KeyP') || padStart;
+    const zoom = this.zoom; this.zoom = 0;
     this.pressedEdge.clear();
-    return { mx, my, jump, jumpPressed, sing, lookX, lookY, anyKey };
+    return { mx, my, jump, jumpPressed, sing, lookX, lookY, anyKey, pausePressed, zoom };
   }
 }

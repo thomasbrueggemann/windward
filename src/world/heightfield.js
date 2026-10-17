@@ -5,7 +5,7 @@ const TAU = Math.PI * 2;
 /** Length of the walkable pilgrimage (world units along -Z). */
 export const PATH_LEN = 2045;
 /** The distant mountain every traveler is drawn to. */
-export const MOUNTAIN = { x: 0, z: -2650, H: 880, R: 1100 };
+export const MOUNTAIN = { x: 0, z: -2650, H: 1020, R: 1100 };
 /** Prevailing wind (unit vector in XZ); dunes' steep lee faces point down-wind. */
 export const WIND = (() => { const x = 0.3, z = -0.95, l = Math.hypot(x, z); return { x: x / l, z: z / l }; })();
 
