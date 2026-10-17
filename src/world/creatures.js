@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { rng } from '../noise.js';
+import { rngFor } from './seed.js';
 import { terrainHeight, clamp } from './heightfield.js';
 import { clothUniforms, clothFrag } from './cloth.js';
 
@@ -41,7 +41,7 @@ export class Flyers {
   constructor(scene) {
     this.scene = scene;
     this.list = [];
-    this.r = rng(909);
+    this.r = rngFor('flyers');
     this._v = new THREE.Vector3();
   }
 

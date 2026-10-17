@@ -1,6 +1,7 @@
 import * as THREE from 'three';
-import { rng } from '../noise.js';
-import { addPlaza, terrainHeight, pathX, zAtProgress, PATH_LEN, trenchCenter } from './heightfield.js';
+import { addPlaza, terrainHeight, pathX, zAtProgress, progressAt, trenchCenter } from './heightfield.js';
+import { rngFor, mulberry32, range, sign, pick } from './seed.js';
+import { PLAN, CORRIDOR, addSite, occupy, isFree, onPath } from './layout.js';
 import { makeStoneBump, makeGlyphSprite } from '../textures.js';
 
 const HDR_AMBER = new THREE.Color(3.4, 1.9, 0.7);
@@ -28,7 +29,7 @@ export class Ruins {
     this._lastSun = new THREE.Vector3(9, 9, 9);
     this.glyphTex = makeGlyphSprite(0);
 
-    const r = this.r = rng(77);
+    this.r = rngFor('ruins');
     this.build();
   }
 
@@ -46,6 +47,7 @@ export class Ruins {
     }
     return mesh;
   }
+  _solid(c) { this.colliders.push(c); occupy(c.x, c.z, c.r ?? Math.hypot(c.hx, c.hz)); }
   _box(w, h, d, mat = this.stone) { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); return m; }
 
   _column(x, z, y0, h, broken = false) {
@@ -65,7 +67,7 @@ export class Ruins {
       drum.position.set(x + 2.6 + this.r() * 2, y0 + 0.7, z + (this.r() - .5) * 4);
       this.group.add(drum);
     }
-    this.colliders.push({ kind: 'circle', x, z, r: 1.15, top: y0 + H + 1 });
+    this._solid({ kind: 'circle', x, z, r: 1.15, top: y0 + H + 1 });
   }
 
   _wall(x, z, y0, len, h, rot) {
@@ -79,7 +81,7 @@ export class Ruins {
       const off = (i - (n - 1) / 2) * (len / n);
       this._place(b, x + Math.cos(rot) * off, y0 - 0.2 + h, z - Math.sin(rot) * off, rot, y0);
     }
-    this.colliders.push({ kind: 'box', x, z, hx: len / 2, hz: 0.7, rot: -rot, top: y0 + h });
+    this._solid({ kind: 'box', x, z, hx: len / 2, hz: 0.7, rot: -rot, top: y0 + h });
   }
 
   _tower(x, z, y0, rot, h) {
@@ -101,7 +103,7 @@ export class Ruins {
     });
     const roof = new THREE.Mesh(new THREE.ConeGeometry(2.9, 3.4, 4), this.gold); roof.geometry.translate(0, 1.7, 0);
     this._place(roof, x, y, z, rot + Math.PI / 4, y0);
-    this.colliders.push({ kind: 'box', x, z, hx: 3.7, hz: 3.7, rot: -rot, top: y0 + h });
+    this._solid({ kind: 'box', x, z, hx: 3.7, hz: 3.7, rot: -rot, top: y0 + h });
   }
 
   _arch(x, z, y0, rot, s = 1) {
@@ -115,7 +117,7 @@ export class Ruins {
     this._place(m, x, y0 - 0.2, z, rot, y0);
     for (const sgn of [-1, 1]) {
       const lx = sgn * (W + w) / 2;
-      this.colliders.push({ kind: 'box', x: x + Math.cos(rot) * lx, z: z - Math.sin(rot) * lx, hx: (W - w) / 2, hz: 1.4 * s, rot: -rot, top: y0 + H });
+      this._solid({ kind: 'box', x: x + Math.cos(rot) * lx, z: z - Math.sin(rot) * lx, hx: (W - w) / 2, hz: 1.4 * s, rot: -rot, top: y0 + H });
     }
   }
 
@@ -141,7 +143,7 @@ export class Ruins {
     door.position.set(0, 4, 34 * 0.85 / 2 + 0.05);
     this.group.add(door);
     door.position.set(x + Math.sin(rot) * 14.5, y0 + 4, z + Math.cos(rot) * 14.5); door.rotation.y = rot;
-    this.colliders.push({ kind: 'box', x, z, hx: 17, hz: 14.5, rot: -rot, top: y0 + 12.8 });
+    this._solid({ kind: 'box', x, z, hx: 17, hz: 14.5, rot: -rot, top: y0 + 12.8 });
   }
 
   _postPair(cx, cz, y0, spanDir, span, h = 17) {
@@ -154,7 +156,7 @@ export class Ruins {
       this._place(p, px, y - 0.4, pz, rot, y);
       const cap = new THREE.Mesh(new THREE.ConeGeometry(1.4, 2.6, 4), this.gold); cap.geometry.translate(0, 1.3, 0);
       this._place(cap, px, y - 0.4 + h, pz, rot + Math.PI / 4, y);
-      this.colliders.push({ kind: 'circle', x: px, z: pz, r: 1.1, top: y + h });
+      this._solid({ kind: 'circle', x: px, z: pz, r: 1.1, top: y + h });
       out.push(new THREE.Vector3(px, y + h - 2.5, pz));
     }
     this.posts.push({ a: out[0], b: out[1] });
@@ -182,7 +184,7 @@ export class Ruins {
     g.fillStyle = gr; g.fillRect(0, 0, 128, 128);
     const beacon = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), color: new THREE.Color(2.2, 1.6, 0.9), blending: THREE.AdditiveBlending, depthWrite: false, fog: false, transparent: true }));
     beacon.scale.set(34, 34, 1); beacon.position.set(x, y0 + 13.4, z); this.group.add(beacon);
-    this.colliders.push({ kind: 'circle', x, z, r: 2.2, top: y0 + 13 });
+    this._solid({ kind: 'circle', x, z, r: 2.2, top: y0 + 13 });
     this.shrines.push({ x, y: y0, z, glyph, beacon, seen: false });
   }
 
@@ -217,46 +219,18 @@ export class Ruins {
   // ------------------------------------------------------------ layout
   build() {
     const r = this.r;
-    const centre = (p) => { const z = zAtProgress(p); return [pathX(z), z]; };
 
     // ----- shrines at the end of each chapter
-    for (const p of [0.289, 0.489, 0.783]) { const [x, z] = centre(p); this._shrine(x + (p > 0.7 ? 6 : 10), z); }
-
-    // ----- the ruined city: three plazas
-    const plazaDefs = [
-      { p: 0.340, kind: 'gate' }, { p: 0.402, kind: 'colonnade' }, { p: 0.462, kind: 'temple' },
-    ];
-    plazaDefs.forEach((d) => {
-      const [x, z] = centre(d.p);
-      const pl = addPlaza(x, z, 50, 80);
-      const y0 = pl.h;
-      const L = (lx, lz) => [x + lx, z + lz];
-      if (d.kind === 'gate') {
-        this._arch(x, z + 28, y0, 0.0, 1.2);
-        this._tower(x - 26, z + 18, y0, 0.2, 30);
-        this._tower(x + 28, z - 6, y0, -0.1, 24);
-        for (let i = 0; i < 6; i++) this._column(x - 12 + (i % 2) * 24, z - 4 - Math.floor(i / 2) * 16, y0, 13, i === 3);
-        this._wall(x + 14, z + 28, y0, 16, 6, 0.1);
-        this._wall(x - 30, z - 22, y0, 20, 8, 1.4);
-        this._postPair(x, z - 38, y0, new THREE.Vector3(1, 0, 0), 24);
-      } else if (d.kind === 'colonnade') {
-        for (let i = 0; i < 6; i++) for (const sx of [-13, 13]) this._column(x + sx, z + 40 - i * 15, y0, 14, i === 2 && sx > 0 || i === 5 && sx < 0);
-        this._hall(x - 40, z - 4, y0, 0.15);
-        this._tower(x + 36, z + 14, y0, -0.3, 34);
-        this._wall(x + 30, z - 30, y0, 24, 7, 0.6);
-        this._postPair(x, z + 48, y0, new THREE.Vector3(1, 0, 0), 28);
-        this._postPair(x, z - 50, y0, new THREE.Vector3(1, 0, 0), 22);
-      } else {
-        this._ziggurat(x - 6, z - 30, y0, 0.0);
-        for (let i = 0; i < 4; i++) this._column(x - 24 + i * 16, z + 6, y0, 12, i === 1);
-        this._hall(x + 38, z + 18, y0, -0.2);
-        this._tower(x - 40, z + 22, y0, 0.3, 28);
-        this._arch(x + 2, z + 40, y0, 0.05, 1.0);
-        this._wall(x + 36, z - 24, y0, 18, 6, 1.2);
-      }
+    PLAN.shrines.forEach((s, i) => {
+      const [x, z] = onPath(s.p, s.side);
+      this._shrine(x, z);
+      addSite('shrine', x, z, { y: this.shrines[i].y, r: 8, index: i });
     });
 
-    // ----- monoliths half-buried in the dunes (scale + landmarks)
+    // ----- the ruined city: three plazas, laid out in path-relative coordinates (lx across, lz along)
+    PLAN.plazas.forEach((d, pi) => this._plaza(d, pi));
+
+    // ----- monoliths half-buried in the dunes (scale + landmarks; on the mountain they shelter from the gusts)
     const mono = (x, z, kind) => {
       const y = terrainHeight(x, z);
       const h = 5 + r() * 9;
@@ -267,34 +241,121 @@ export class Ruins {
       m.rotation.set((r() - .5) * 0.3, r() * 6.28, (r() - .5) * 0.35);
       m.position.set(x, y - 1.6 - r() * 2, z);
       this.group.add(m);
-      this.colliders.push({ kind: 'circle', x, z, r: kind === 2 ? 2.8 : 1.1, top: y + (kind === 2 ? 0 : h * 0.7) });
+      this._solid({ kind: 'circle', x, z, r: kind === 2 ? 2.8 : 1.1, top: y + (kind === 2 ? 0 : h * 0.7) });
+      addSite('monolith', x, z, { y, r: 3 });
     };
-    const monoZs = [];
-    for (let z = -40; z > -610; z -= 22 + r() * 40) monoZs.push(z);
-    for (let z = -1620; z > -2030; z -= 30 + r() * 50) monoZs.push(z);
-    for (const z of monoZs) {
-      const side = r() < 0.5 ? -1 : 1;
-      mono(pathX(z) + side * (14 + r() * 70), z + (r() - .5) * 10, (r() * 3) | 0);
+    const monoPs = [];
+    for (let p = 0.02; p < 0.30; p += (22 + r() * 40) / 2045) monoPs.push(p);
+    for (let p = 0.792; p < 0.993; p += (30 + r() * 50) / 2045) monoPs.push(p);
+    for (const p of monoPs) {
+      const side = sign(r);
+      const [x, z] = onPath(p, side * (14 + r() * 70));
+      mono(x, z + (r() - .5) * 10, (r() * 3) | 0);
     }
     // the first landmark: a standing gateway right ahead of the spawn point
     {
-      const z = -52, x = pathX(z) - 2, y = terrainHeight(x, z);
+      const g = PLAN.gateway, z = g.z, x = pathX(z) + g.dx, y = terrainHeight(x, z), rot = g.rot;
       const lintel = this._box(14, 2.2, 2.4); lintel.geometry.translate(0, 1.1, 0);
-      this._place(lintel, x, y + 10.5, z, 0.12);
+      this._place(lintel, x, y + 10.5, z, rot);
       for (const sx of [-6, 6]) {
         const col = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.3, 14, 12), this.stone); col.geometry.translate(0, 7, 0);
-        const px = x + sx * Math.cos(0.12), pz = z - sx * Math.sin(0.12);
+        const px = x + sx * Math.cos(rot), pz = z - sx * Math.sin(rot);
         this._place(col, px, terrainHeight(px, pz) - 2.2, pz, 0);
-        this.colliders.push({ kind: 'circle', x: px, z: pz, r: 1.3, top: 40 });
+        this._solid({ kind: 'circle', x: px, z: pz, r: 1.3, top: 40 });
       }
+      addSite('gateway', x, z, { y, r: 7, rot });
     }
 
     // ----- the depths: natural bridges spanning the canyon, leaving gaps for shafts of light
+    const gapEvery = 3 + (r() < 0.35 ? 1 : 0);
     for (let z = zAtProgress(0.535), i = 0; z > zAtProgress(0.735); z -= 52 + r() * 22, i++) {
-      if (i % 3 === 2) continue;
-      const cx = this._canyonCentre(z);
-      this._rockBridge(cx + (r() - .5) * 10, z, -11 - r() * 5, 150, 15 + r() * 14, 7 + r() * 4, (r() - .5) * 0.15);
+      if (i % gapEvery === gapEvery - 1) continue;
+      const cx = this._canyonCentre(z) + (r() - .5) * 10, y = -11 - r() * 5;
+      this._rockBridge(cx, z, y, 150, 15 + r() * 14, 7 + r() * 4, (r() - .5) * 0.15);
+      addSite('bridge', cx, z, { y, r: 20 });
     }
+  }
+
+  /** One plaza of the ruined city. Coordinates are path-relative: lx across the path (mirrored per seed), lz along it. */
+  _plaza(d, pi) {
+    const rr = mulberry32(d.seed), m = d.mirror;
+    const zc = zAtProgress(d.p), xc = pathX(zc);
+    const pl = addPlaza(xc, zc, 50, 80);
+    const y0 = pl.h;
+    const J = (v, a = 2.5) => v + (rr() - .5) * 2 * a;
+    const head = (z) => Math.atan((pathX(z - 1) - pathX(z + 1)) / -2);
+    // keep anything solid of radius `rad` out of the walking corridor
+    const safe = (lx, rad) => { const s = Math.sign(lx) || sign(rr); return s * Math.max(Math.abs(lx), rad + CORRIDOR + 0.5); };
+    const P = (lx, lz) => { const z = zc + lz; return [pathX(z) + m * lx, z]; };
+    const R = (rot, lz) => m * rot + head(zc + lz);
+    const column = (lx, lz, h, broken) => { const [x, z] = P(safe(lx, 1.3), lz); this._column(x, z, y0, h, broken); };
+    const tower = (lx, lz, rot, h) => { const [x, z] = P(safe(lx, 5.3), lz); this._tower(x, z, y0, R(rot, lz), h); };
+    const wall = (lx, lz, len, h, rot) => { const [x, z] = P(safe(lx, len / 2 + 0.7), lz); this._wall(x, z, y0, len, h, R(rot, lz)); };
+    const hall = (lx, lz, rot) => { const [x, z] = P(safe(lx, 13), lz); this._hall(x, z, y0, R(rot, lz)); };
+    const arch = (lz, s, dx = 0) => { const [x, z] = P(dx, lz); this._arch(x, z, y0, head(z), s); };
+    const posts = (lz, span) => { const [x, z] = P(0, lz), h = head(z); this._postPair(x, z, y0, new THREE.Vector3(Math.cos(h), 0, -Math.sin(h)), span); };
+    const H = (h) => h * range(rr, 0.82, 1.18);
+    const br = (p = 0.22) => rr() < p;
+
+    if (d.kind === 'gate') {
+      arch(J(28, 4), range(rr, 1.05, 1.3));
+      tower(J(-26), J(18), J(0.2, 0.15), H(30));
+      tower(J(28), J(-6, 6), J(-0.1, 0.15), H(24));
+      const n = 2 * (2 + ((rr() * 3) | 0)), gap = J(12, 1.5), step = range(rr, 13, 17);
+      for (let i = 0; i < n; i++) column((i % 2 ? 1 : -1) * gap, -4 - Math.floor(i / 2) * step, H(13), br());
+      wall(J(14), J(28, 2), J(16, 3), H(6), J(0.1, 0.2));
+      wall(J(-30, 4), J(-22, 4), J(20, 4), H(8), J(1.4, 0.2));
+      posts(J(-38, 3), J(24, 3));
+    } else if (d.kind === 'colonnade') {
+      const rows = 5 + ((rr() * 3) | 0), half = range(rr, 11.5, 14.5), step = range(rr, 13, 16.5), z0 = (rows - 1) * step / 2;
+      for (let i = 0; i < rows; i++) for (const sx of [-half, half]) column(sx, z0 - i * step, H(14), br(0.18));
+      hall(J(-40, 4), J(-4, 6), J(0.15, 0.2));
+      tower(J(36, 4), J(14, 6), J(-0.3, 0.2), H(34));
+      wall(J(30, 4), J(-30, 4), J(24, 4), H(7), J(0.6, 0.3));
+      posts(z0 + 8, J(28, 2));
+      posts(-z0 - 10 + J(0, 2), J(22, 2));
+    } else {
+      const zs = sign(rr);
+      { const [x, z] = P(safe(J(-24, 3), 22.4), J(-30, 4)); this._ziggurat(x, z, y0, R(J(0, 0.15), -30)); }
+      const n = 3 + ((rr() * 3) | 0), sp = range(rr, 14, 18);
+      for (let i = 0; i < n; i++) column(-(n - 1) * sp / 2 + i * sp, J(6, 2), H(12), br(0.25));
+      hall(J(38, 4), J(18, 5) * zs, J(-0.2, 0.2));
+      tower(J(-40, 4), J(22, 5) * zs, J(0.3, 0.2), H(28));
+      arch(J(40, 4), range(rr, 0.9, 1.1), J(0, 1.5));
+      wall(J(36, 4), J(-24, 4) * zs, J(18, 3), H(6), J(1.2, 0.3));
+    }
+    // scattered debris: broken drums, wall stubs and the odd lone tower, wherever there is room
+    const extras = 2 + ((rr() * 4) | 0);
+    for (let k = 0, tries = 0; k < extras && tries < 40; tries++) {
+      const kind = pick(rr, ['col', 'col', 'wall', 'tower']);
+      const rad = kind === 'tower' ? 5.3 : kind === 'wall' ? 6 : 1.3;
+      const lx = sign(rr) * range(rr, 16, 62), lz = range(rr, -58, 58);
+      const [x, z] = P(lx, lz);
+      if (!isFree(x, z, rad)) continue;
+      if (kind === 'col') column(lx, lz, H(12), true);
+      else if (kind === 'wall') wall(lx, lz, range(rr, 8, 14), H(5), range(rr, 0, 3));
+      else tower(lx, lz, range(rr, -0.4, 0.4), H(20));
+      k++;
+    }
+    addSite('plaza', xc, zc, { y: y0, r: 50, kind: d.kind, index: pi, progress: progressAt(zc) });
+  }
+
+  /** Points along the path centre that are inside a collider (should be empty). */
+  pathBlockers(step = 1) {
+    const out = [], pr = 0.45 + 0.3;
+    for (let z = -5; z > zAtProgress(0.995); z -= step) {
+      const x = pathX(z);
+      for (const c of this.colliders) {
+        let hit;
+        if (c.kind === 'circle') hit = Math.hypot(x - c.x, z - c.z) < c.r + pr;
+        else {
+          const cs = Math.cos(c.rot), sn = Math.sin(c.rot), dx = x - c.x, dz = z - c.z;
+          hit = Math.abs(dx * cs + dz * sn) < c.hx + pr && Math.abs(-dx * sn + dz * cs) < c.hz + pr;
+        }
+        if (hit && terrainHeight(x, z) < c.top) { out.push({ x, z, p: progressAt(z), c }); break; }
+      }
+    }
+    return out;
   }
 
   _canyonCentre(z) { return trenchCenter(z); }

@@ -28,6 +28,9 @@ trudge up them slowly. Follow the pillars of light to the symbols that lengthen 
 - **Sand shader** (`src/world/terrain.js`) after John Edwards' GDC 2013 talk "Sand Rendering in Journey":
   high-contrast "phenomenological" diffuse, wind ripples that follow dune slope, a wide "ocean" specular sheen,
   Fresnel rim light, and multi-scale glitter that stays about a pixel wide at any distance.
+- **Seeded worlds** (`src/world/seed.js`, `src/world/layout.js`): the noise, route meander, dune grain, mountain,
+  ruined-city plazas, shrines, symbols, cloth, creatures and murals all derive from one seed via independent
+  streams (`rngFor(tag)`); `layout.js` exports the chapter plan (`PLAN`) and the built sites per chapter (`SITES`).
 - **Chunked infinite dunes** streamed around the traveler plus one coarse far mesh carrying the mountain.
 - **Four chapters** driven by one colour script (`src/world/palette.js`): golden dunes → amber ruins at dusk →
   the blue depths (canyon, rock arches, shafts of light) → snow and white-out.
@@ -53,7 +56,8 @@ trudge up them slowly. Follow the pillars of light to the symbols that lengthen 
 ## Debug URL flags
 
 `?p=0.4` start at 40 % of the journey · `?glyphs=6` start with 6 symbols · `?auto` skip the title (and mute) ·
-`?mute` no audio. `window.__game` exposes internals; `window.__advance(seconds)` steps the simulation;
+`?mute` no audio · `?seed=123` build world 123 (otherwise every new journey gets a random world; the seed is saved
+with progress and shown in the pause menu). `window.__game` exposes internals; `window.__advance(seconds)` steps the simulation;
 `window.__view({ p, yaw, pitch, dist })` teleports along the path and frames the traveler.
 
 ## Credits

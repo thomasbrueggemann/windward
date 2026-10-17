@@ -1,10 +1,11 @@
-// Small, fast 2D gradient noise (deterministic).
+import { rngFor } from './world/seed.js';
+
+// Small, fast 2D gradient noise (deterministic per world seed).
 const P = new Uint8Array(512);
 (function seed() {
   const p = new Uint8Array(256);
   for (let i = 0; i < 256; i++) p[i] = i;
-  let s = 1337;
-  const rnd = () => (s = (Math.imul(s, 1664525) + 1013904223) >>> 0) / 4294967296;
+  const rnd = rngFor('noise');
   for (let i = 255; i > 0; i--) {
     const j = (rnd() * (i + 1)) | 0;
     const t = p[i]; p[i] = p[j]; p[j] = t;
