@@ -22,7 +22,7 @@ const KEYS = [
     rim: C('#4a94b0'), sunC: C('#ffd090'), sunI: 3.6, sun: V(0.2, 0.9, -0.3), snow: 0, glit: C('#a8e4ff'), amb: C('#2a5898'), grd: C('#183858'), cave: 1, dust: 0.9, exp: 1.05, bloom: 0.75, rays: 0.5 },
   { p: 0.76, top: C('#2a4f86'), hor: C('#a6c3d8'), fog: C('#8aa8c4'), fogD: 0.0007, lit: C('#cfe0f0'), hi: C('#ffffff'), shade: C('#3d5690'),
     rim: C('#e8f2ff'), sunC: C('#fff1dc'), sunI: 2.4, sun: V(-0.4, 0.34, -0.85), snow: 0.7, glit: C('#ffffff'), amb: C('#8aa8d8'), grd: C('#9ab0c8'), cave: 0.2, dust: 1.0, exp: 0.9, bloom: 0.5, rays: 0.7 },
-  { p: 0.86, top: C('#4a6a98'), hor: C('#cfdeea'), fog: C('#b9c9da'), fogD: 0.0009, lit: C('#dce7f3'), hi: C('#ffffff'), shade: C('#4a62a0'),
+  { p: 0.86, top: C('#36507c'), hor: C('#c4d4e4'), fog: C('#b9c9da'), fogD: 0.0009, lit: C('#dce7f3'), hi: C('#ffffff'), shade: C('#4a62a0'),
     rim: C('#ffffff'), sunC: C('#fff6ea'), sunI: 2.0, sun: V(-0.55, 0.22, -0.8), snow: 1, glit: C('#ffffff'), amb: C('#a8bce0'), grd: C('#b8c8dc'), cave: 0, dust: 1.2, exp: 0.86, bloom: 0.6, rays: 0.5 },
   { p: 1.00, top: C('#b8c8dc'), hor: C('#e8eef6'), fog: C('#e2e9f2'), fogD: 0.0030, lit: C('#f4f8fd'), hi: C('#ffffff'), shade: C('#8fa2c4'),
     rim: C('#ffffff'), sunC: C('#ffffff'), sunI: 1.6, sun: V(-0.4, 0.3, -0.85), snow: 1, glit: C('#ffffff'), amb: C('#c4d2e8'), grd: C('#d0dbea'), cave: 0, dust: 1.4, exp: 1.0, bloom: 0.7, rays: 0.3 },

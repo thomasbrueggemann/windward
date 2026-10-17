@@ -105,7 +105,7 @@ void main(){
   vec3 rock = uRock * (0.30 + 0.9 * tone) * (0.85 + 0.25 * strata);
   float snowHigh = smoothstep(470., 640., vWorld.y + 45. * vnoise(vWorld.xz * 0.012)) * (1. - 0.75 * rockAmt);
   float snowAmt = max(uSnow * (1. - 0.55 * rockAmt), snowHigh);
-  vec3 snow = mix(uSnowCol * vec3(0.42, 0.53, 0.84), uSnowCol * 0.9, smoothstep(0.3, 0.75, mix(dg, d, 0.6)));
+  vec3 snow = mix(uSnowCol * vec3(0.36, 0.47, 0.8), uSnowCol * 0.95, smoothstep(0.5, 0.82, mix(dg, d, 0.6)));
   vec3 col = mix(sand, rock, rockAmt);
   col = mix(col, snow, snowAmt);
 
@@ -115,7 +115,7 @@ void main(){
   // --- specular layers: rim + "ocean" sheen, plus glitter
   vec3 H = normalize(L + V);
   float ndh = sat(dot(normalize(mix(Ng, N, 0.12)), H));
-  float ocean = pow(ndh, 60.) * 0.9 + pow(ndh, 9.) * 0.10;
+  float ocean = pow(ndh, 60.) * 0.9 + pow(ndh, 9.) * 0.05;
   float lit = smoothstep(0.0, 0.35, dot(Ng, L));
   ocean *= lit * (1. - rockAmt * 0.8);
   float fres = pow(1. - sat(dot(N, V)), 3.2);
@@ -145,7 +145,7 @@ void main(){
   // --- aerial perspective (haze warms toward the sun)
   float fogF = 1. - exp(-pow(dist * uFogD, 2.));
   float sunAmt = pow(sat(dot(-V, L)), 5.);
-  vec3 fogCol = uFog + uSunColor * sunAmt * 0.12;
+  vec3 fogCol = uFog + uSunColor * sunAmt * 0.07;
   fogCol = mix(fogCol, uAmb * 0.9 + uFog * 0.25, uFogTint * smoothstep(0.1, 0.8, fogF));
   // valleys hold more haze
   fogF = sat(fogF + (1. - exp(-max(0., 18. - vWorld.y) * 0.004)) * 0.0);

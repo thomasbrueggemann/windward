@@ -79,7 +79,7 @@ function updatePost(time) {
 }
 
 const sparkles = new ParticlePool(scene, 1400, true);
-const dustPool = new ParticlePool(scene, 800, false);
+const dustPool = new ParticlePool(scene, 1800, false);
 const ambient = new AmbientDust(scene);
 const fx = { sparkles, dust: dustPool };
 
@@ -512,6 +512,27 @@ function pickLookTarget() {
   return found ? _lt : null;
 }
 
+// ------------------------------------------------------------------ wind tearing plumes of sand (or snow) off the dune crests
+function sandStreams(dt, pal) {
+  if (game.state === 'title' || pal.cave > 0.5) return;
+  const n = Math.round(dt * (1500 + 1500 * pal.snow + 3000 * game.whiteout));
+  const cx = camera.position.x, cz = camera.position.z;
+  camera.getWorldDirection(_camFwd);
+  const col = _plumeCol.copy(pal.hi).lerp(pal.sunC, 0.3).multiplyScalar(1.15);
+  const ws = 4.5 + 6 * pal.snow + 10 * game.whiteout;
+  for (let i = 0; i < n; i++) {
+    const r = 6 + Math.random() * 70, a = (Math.random() - 0.5) * 1.6 + Math.atan2(_camFwd.x, _camFwd.z);
+    const x = cx + Math.sin(a) * r, z = cz + Math.cos(a) * r;
+    const h = terrainHeight(x, z);
+    // a crest: a local high point along the wind
+    const up = terrainHeight(x - WIND.x * 2.5, z - WIND.z * 2.5), lee = terrainHeight(x + WIND.x * 2.5, z + WIND.z * 2.5);
+    if (h <= up || h < (up + lee) / 2 + 0.15) continue;
+    dustPool.emit(x, h + 0.1, z, WIND.x * ws * (0.7 + Math.random() * 0.6), 0.3 + Math.random() * 0.7, WIND.z * ws * (0.7 + Math.random() * 0.6),
+      1.8 + Math.random() * 1.8, (0.5 + Math.random() * 0.6) * (1 - 0.6 * pal.snow), col.r, col.g, col.b, 0.3 - 0.12 * pal.snow, 0.25, 0.15, 3.5 - 2 * pal.snow);
+  }
+}
+const _plumeCol = new THREE.Color();
+
 // ------------------------------------------------------------------ main loop
 function frame(nowMs, doRender = true) {
   let dt = (nowMs - (frame.last ?? nowMs)) / 1000;
@@ -607,6 +628,7 @@ function frame(nowMs, doRender = true) {
   const wind = 4 + snow * 12 + game.whiteout * 26;
   ambient.update(dt, time, camera, renderer, player.pos.y, { x: WIND.x * wind, z: WIND.z * wind }, snow * 2.5, clamp(pal.dust * 0.5, 0, 1) * (1 - 0.75 * pal.cave),
     snow > 0.5 ? new THREE.Color(1, 1, 1) : SAND, snow > 0.5 ? 0.12 : 0.07, 0.55);
+  sandStreams(dt, pal);
   sparkles.update(dt, camera, renderer);
   dustPool.update(dt, camera, renderer);
 

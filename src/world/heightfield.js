@@ -97,7 +97,7 @@ function rawHeight(x, z, lod) {
   // mountain skirt calms the dunes
   const mdx = x - MOUNTAIN.x, mdz = z - MOUNTAIN.z;
   const mr = Math.hypot(mdx, mdz) / MOUNTAIN.R;
-  ds *= 1 - 0.8 * smooth(1.15, 0.7, mr);
+  ds *= 1 - 0.5 * smooth(1.15, 0.7, mr);
 
   const lam1 = 150 + 45 * noise2(x * 0.0013 + 2, z * 0.0013 - 6);
   const m1 = noise2(v * 0.0045 + 3.1, u * 0.0012) * 70;

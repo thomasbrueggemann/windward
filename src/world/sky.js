@@ -24,8 +24,8 @@ void main() {
   vec3 L = normalize(uSunDir);
   float sd = max(dot(d, L), 0.);
   // sky gradient, a bright haze band hugging the horizon, and a warmer side toward the sun
-  float t = smoothstep(-0.02, 0.8, h);
-  vec3 col = mix(uHor, uTop, pow(t, 0.62));
+  float t = smoothstep(-0.02, 0.55, h);
+  vec3 col = mix(uHor, uTop, pow(t, 0.55));
   float band = exp(-abs(h) * 18.);
   col += uHor * band * 0.22;
   float toward = 0.5 + 0.5 * dot(normalize(d.xz + 1e-4), normalize(L.xz + 1e-4));
@@ -34,7 +34,7 @@ void main() {
   // sun: hard disc, soft corona, broad atmospheric glow (dimmed by overcast)
   float disc = smoothstep(0.99955, 0.99975, sd);
   float sunVis = 1. - 0.85 * uOvercast;
-  col += uSunColor * (disc * 9. * uSunI * 0.35 * sunVis + pow(sd, 220.) * 1.2 * sunVis + pow(sd, 22.) * 0.38 + pow(sd, 4.) * 0.16)
+  col += uSunColor * (disc * 9. * uSunI * 0.35 * sunVis + pow(sd, 220.) * 1.2 * sunVis + pow(sd, 22.) * 0.34 + pow(sd, 5.) * 0.1)
          * (0.6 + 0.4 * smoothstep(0.6, 0., h));
   // clouds: long cirrus streaks high up, soft banks low on the horizon
   if (h > 0.0) {
