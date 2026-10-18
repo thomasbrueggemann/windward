@@ -12,7 +12,10 @@ const HDR_AMBER = new THREE.Color(3.4, 1.9, 0.7);
 const SHADOW_VERT = /* glsl */`
 uniform vec4 uRow; varying float vH;
 #include <fog_pars_vertex>
-void main() { vH = dot(uRow, vec4(position, 1.)); vec4 mvPosition = modelViewMatrix * vec4(position, 1.); gl_Position = projectionMatrix * mvPosition;
+void main() { vH = dot(uRow, vec4(position, 1.)); vec4 mvPosition = modelViewMatrix * vec4(position, 1.);
+  // pull toward the camera so rippled sand just at the shadow plane never z-fights it
+  float ml = length(mvPosition.xyz); mvPosition.xyz *= 1. - min(0.5, (0.3 + 0.006 * ml) / ml);
+  gl_Position = projectionMatrix * mvPosition;
 #include <fog_vertex>
 }`;
 const SHADOW_FRAG = /* glsl */`
@@ -24,7 +27,9 @@ void main() { gl_FragColor = vec4(uCol, uOp * mix(1., 0.42, smoothstep(0., 16., 
 const DECAL_VERT = /* glsl */`
 attribute vec4 iSize; varying vec2 vP; varying vec4 vS;
 #include <fog_pars_vertex>
-void main() { vS = iSize; vP = position.xz * 2. * (iSize.xy + iSize.z); vec4 mvPosition = modelViewMatrix * instanceMatrix * vec4(position, 1.); gl_Position = projectionMatrix * mvPosition;
+void main() { vS = iSize; vP = position.xz * 2. * (iSize.xy + iSize.z); vec4 mvPosition = modelViewMatrix * instanceMatrix * vec4(position, 1.);
+  float ml = length(mvPosition.xyz); mvPosition.xyz *= 1. - min(0.5, (0.3 + 0.006 * ml) / ml);
+  gl_Position = projectionMatrix * mvPosition;
 #include <fog_vertex>
 }`;
 const DECAL_FRAG = /* glsl */`
