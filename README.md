@@ -1,6 +1,6 @@
 # Windward
 
-A long walk into the wind: an unofficial, non-commercial fan project inspired by thatgamecompany's *Journey* (2012), built from scratch with
+A long walk into the wind, built from scratch with
 [three.js](https://threejs.org). No assets are used: terrain, textures, models and music are all procedural.
 
 ```bash
@@ -98,8 +98,3 @@ with progress and shown in the pause menu). `window.__game` exposes internals; `
 `?room=garden` (or a door index, `?room=2`) walks straight into a building; `window.__enter('tower')` / `__enter(1)` and
 `window.__exit()` do the same at any time, `__game.interiors.info()` lists the doors; `?auto&rooms` makes the
 autopilot detour through every doorway.
-
-## Credits
-
-Windward is inspired by *Journey* by thatgamecompany (Jenova Chen, Kellee Santiago, John Edwards, Matt Nava,
-Austin Wintory). This project is not affiliated with or endorsed by them or Sony.

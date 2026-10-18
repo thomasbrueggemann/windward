@@ -25,7 +25,6 @@
   #continue { appearance: none; background: rgba(255,220,160,.1); color: #ffe9c8; border: 1px solid rgba(255,225,180,.7); padding: 14px 44px; letter-spacing: .5em; font-size: 13px; text-transform: uppercase; cursor: pointer; transition: all .5s; margin: 0 0 14px .5em; }
   #continue span { display: block; margin-top: 6px; font-size: 10px; letter-spacing: .3em; opacity: .7; }
   #continue:hover { background: rgba(255,220,160,.2); box-shadow: 0 0 40px rgba(255,190,100,.35); }
-  #title .legal { position: absolute; bottom: 22px; left: 0; right: 0; padding: 0 24px; font-size: 11px; line-height: 1.6; opacity: .42; letter-spacing: .08em; }
   #hint { position: fixed; left: 24px; bottom: 20px; color: #fff0d8; font-size: 12px; letter-spacing: .16em; line-height: 1.9; opacity: 0; transition: opacity 2s; pointer-events: none; text-shadow: 0 1px 8px rgba(60,20,0,.7); z-index: 5; }
   #hint b { font-weight: 600; color: #ffd48a; }
   #fade { position: fixed; inset: 0; background: #fff; opacity: 0; pointer-events: none; transition: opacity 2.5s ease; z-index: 6; }
@@ -63,7 +62,7 @@
     z-index: 8; touch-action: none; user-select: none; -webkit-user-select: none; opacity: 0; pointer-events: none; transition: opacity 1.2s; text-shadow: 0 0 8px rgba(80,30,0,.6); }
   .touchbtn.small { width: 62px; height: 62px; font-size: 9px; letter-spacing: .2em; padding-left: .2em; }
   body.playing .touchbtn { opacity: 1; pointer-events: auto; }
-  @media (max-width: 600px) { #hint { left: 16px; right: 186px; font-size: 11px; letter-spacing: .1em; } #title .legal { font-size: 9px; bottom: 10px; } #title .bottom { padding-bottom: 15vh; } }
+  @media (max-width: 600px) { #hint { left: 16px; right: 186px; font-size: 11px; letter-spacing: .1em; } #title .bottom { padding-bottom: 15vh; } }
   #err { position: fixed; top: 12px; left: 12px; right: 12px; color: #ffb4a0; font: 12px monospace; white-space: pre-wrap; z-index: 99; pointer-events: none; }
 </style>
 </head>
@@ -95,7 +94,6 @@
     <button id="start" disabled>Preparing…</button>
     <div id="loading">headphones recommended</div>
   </div>
-  <div class="legal">Windward is an unofficial, non-commercial fan project inspired by thatgamecompany's “Journey” (2012). Not affiliated with or endorsed by thatgamecompany or Sony. All code, art and music here are original and procedurally generated.</div>
 </div>
 <div id="err"></div>
 <script type="module" src="/src/main.js"></script>
