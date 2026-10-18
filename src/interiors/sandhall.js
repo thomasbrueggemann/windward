@@ -1,42 +1,96 @@
 // The Hall of Falling Sand: a long sunlit hall whose roof has fallen in. Sand pours through cracks in the walls and
 // flows across the floor as a slow golden sea; shafts of light stand in the dust; a symbol waits at the far end.
 import * as THREE from 'three';
-import { Room, C, V, stoneMat, sandFloor, lightShaft, motes, makeAmbience, radialTex } from './common.js';
+import { Room, C, V, stoneMat, sandFloor, lightShaft, motes, makeAmbience, radialTex, canvasTex } from './common.js';
 import { makeGlyphSprite, makeRingTexture } from '../textures.js';
 import { smooth, clamp } from '../world/heightfield.js';
-import { range, sign } from '../world/seed.js';
+import { range, sign, rngFor } from '../world/seed.js';
 
 const HW = 11, Z0 = -56, Z1 = 4, WALL_H = 15;
 
 const fallVert = /* glsl */`
 varying vec2 vUv; varying vec3 vW;
 void main() { vUv = uv; vec4 w = modelMatrix * vec4(position, 1.); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`;
+const noiseGlsl = /* glsl */`
+float h(vec2 p){ return fract(sin(dot(p, vec2(41.3, 289.1))) * 43758.5453); }
+float n(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.-2.*f); return mix(mix(h(i), h(i+vec2(1,0)), f.x), mix(h(i+vec2(0,1)), h(i+vec2(1,1)), f.x), f.y); }`;
+// a curtain of sand: a slow body of clumps, fast fine streaks inside it, single grains catching the light, a billowing foot
 const fallFrag = /* glsl */`
 precision highp float;
 uniform float uTime, uSpeed, uLit; uniform vec3 uColor;
 varying vec2 vUv; varying vec3 vW;
-float h(vec2 p){ return fract(sin(dot(p, vec2(41.3, 289.1))) * 43758.5453); }
-float n(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.-2.*f); return mix(mix(h(i), h(i+vec2(1,0)), f.x), mix(h(i+vec2(0,1)), h(i+vec2(1,1)), f.x), f.y); }
+${noiseGlsl}
 void main() {
-  float x = vUv.x, y = vUv.y;
-  float core = smoothstep(0., 0.35, x) * smoothstep(1., 0.65, x);
-  float s = n(vec2(x * 9., y * 3. + uTime * uSpeed)) * 0.6 + n(vec2(x * 23., y * 7. + uTime * uSpeed * 1.6)) * 0.4;
-  float a = core * smoothstep(0.25, 0.75, s + core * 0.25) * smoothstep(0., 0.06, 1. - y) * (0.55 + 0.45 * smoothstep(0., 0.2, y));
-  vec3 col = uColor * (0.75 + 0.5 * s) * uLit;
-  gl_FragColor = vec4(col, a * 0.85);
+  float y = vUv.y, t = uTime * uSpeed;
+  float spread = mix(1.0, 0.5, pow(y, 1.4)) * (1. + 0.12 * sin(t * 0.7 + y * 5.));
+  float xx = (vUv.x - 0.5) * 2. / spread + (n(vec2(y * 3., t * 0.3)) - 0.5) * 0.25 * (1. - y);
+  float prof = clamp(1. - xx * xx, 0., 1.);
+  float body = n(vec2(xx * 4.5, y * 2.2 + t * 1.15)) * 0.6 + n(vec2(xx * 9., y * 5. + t * 1.7)) * 0.4;
+  float streak = n(vec2(xx * 22., y * 4. + t * 4.2)) * 0.6 + n(vec2(xx * 41., y * 9. + t * 6.5)) * 0.4;
+  vec2 cell = vec2(xx * 34., y * 70. + t * 7.);
+  float hh = h(floor(cell)), grain = step(0.9, hh) * smoothstep(0.45, 0., length(fract(cell) - 0.5));
+  float dens = prof * (0.5 * body + 0.5 * streak) + prof * 0.25;
+  float a = smoothstep(0.2, 0.72, dens + 0.08) * pow(prof, 0.45);
+  // the foot spreads into a billow that fades out
+  float foot = 1. - smoothstep(0., 0.2, y);
+  float billow = n(vec2(vUv.x * 7., y * 6. - t * 0.4)) * foot;
+  a = max(a * (1. - foot * 0.35), billow * 0.55 * (0.4 + 0.6 * prof * 0. + 0.6 * smoothstep(0., 0.25, vUv.x) * smoothstep(1., 0.75, vUv.x)));
+  a *= smoothstep(0., 0.05, 1. - y) * (0.5 + 0.5 * smoothstep(0., 0.08, y));
+  float edge = 1. - prof;
+  vec3 col = uColor * (0.62 + 0.6 * body + 0.3 * streak) * uLit * (1. + 0.7 * edge * edge);   // thin edges glow where light passes through
+  col += grain * vec3(1., 0.88, 0.6) * 1.8 * prof;
+  gl_FragColor = vec4(col, a * 0.8);
 }`;
 const flowFrag = /* glsl */`
 precision highp float;
 uniform float uTime; uniform vec3 uColor;
 varying vec2 vUv; varying vec3 vW;
-float h(vec2 p){ return fract(sin(dot(p, vec2(41.3, 289.1))) * 43758.5453); }
-float n(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.-2.*f); return mix(mix(h(i), h(i+vec2(1,0)), f.x), mix(h(i+vec2(0,1)), h(i+vec2(1,1)), f.x), f.y); }
+${noiseGlsl}
 void main() {
   float side = 1. - abs(vUv.x * 2. - 1.);
   float s = n(vec2(vUv.x * 6., vUv.y * 2.2 - uTime * 0.55)) * 0.65 + n(vec2(vUv.x * 15., vUv.y * 6. - uTime * 0.9)) * 0.35;
+  float lines = 0.5 + 0.5 * sin((vUv.x * 14. + n(vec2(vUv.y * 5. - uTime * 0.2, vUv.x * 3.)) * 3.) * 6.2831);
   float a = smoothstep(0.0, 0.5, side) * smoothstep(0.35, 0.8, s) * smoothstep(1., 0.7, vUv.y) * smoothstep(0., 0.08, vUv.y);
-  gl_FragColor = vec4(uColor * (0.8 + 0.5 * s), a * 0.55);
+  float grain = step(0.93, h(floor(vec2(vUv.x * 40., vUv.y * 120. - uTime * 2.2)))) * side;
+  gl_FragColor = vec4(uColor * (0.75 + 0.45 * s + 0.12 * lines) + grain * 0.9, a * 0.6);
 }`;
+// grains thrown up where the sand lands: one draw call, ballistic on the GPU
+const sprayVert = /* glsl */`
+attribute vec4 aSeed; attribute vec3 aOrg; attribute vec2 aDir; uniform float uTime, uScale;
+varying float vA;
+void main() {
+  float life = 0.6 + 0.5 * aSeed.w, ph = fract(uTime * (0.45 + 0.4 * aSeed.x) + aSeed.y);
+  float t = ph * life, sp = 0.8 + 2.4 * aSeed.z;
+  vec3 p = aOrg + vec3(aDir.x * sp * t * (0.6 + aSeed.x), 2.6 * aSeed.w * t * 2.2 - 4.9 * t * t * 1.3, aDir.y * sp * t * (0.6 + aSeed.x));
+  p.xz += vec2(-aDir.y, aDir.x) * (aSeed.x - 0.5) * 0.6 * ph;
+  vec4 mv = viewMatrix * vec4(p, 1.); gl_Position = projectionMatrix * mv;
+  vA = smoothstep(0., 0.08, ph) * (1. - ph) * smoothstep(0.3, 2., -mv.z);
+  gl_PointSize = clamp(0.07 * (0.5 + aSeed.z) * uScale / max(0.1, -mv.z), 1., 14.);
+}`;
+const sprayFrag = /* glsl */`
+precision highp float; uniform vec3 uColor; varying float vA;
+void main() { float d = length(gl_PointCoord - 0.5) * 2.; float a = smoothstep(1., 0.2, d); gl_FragColor = vec4(uColor * a * vA, a * vA * 0.9); }`;
+
+let _crack = null;
+/** A ragged dark opening with a crumbled lip, for where the sand pours through the wall. */
+function crackTex() {
+  return _crack || (_crack = canvasTex(128, 192, (g, w, h) => {
+    const r = rngFor('crack');
+    g.clearRect(0, 0, w, h);
+    g.filter = 'blur(2px)';
+    g.fillStyle = '#e9b27a';
+    g.beginPath();
+    const pts = [];
+    for (let i = 0; i <= 14; i++) { const t = i / 14; pts.push([w * (0.5 - 0.3 * Math.sin(t * Math.PI) - r() * 0.07), h * (0.02 + 0.96 * t)]); }
+    for (let i = 14; i >= 0; i--) { const t = i / 14; pts.push([w * (0.5 + 0.3 * Math.sin(t * Math.PI) + r() * 0.07), h * (0.02 + 0.96 * t)]); }
+    pts.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y)));
+    g.fill();
+    g.filter = 'blur(3px)'; g.fillStyle = '#1a0a04';
+    g.beginPath();
+    pts.forEach(([x, y], i) => { const k = 0.82, cx = w / 2; (i ? g.lineTo(cx + (x - cx) * k, h / 2 + (y - h / 2) * 0.94) : g.moveTo(cx + (x - cx) * k, h / 2 + (y - h / 2) * 0.94)); });
+    g.fill();
+  }));
+}
 
 export class SandHall extends Room {
   constructor(door) {
@@ -46,7 +100,7 @@ export class SandHall extends Room {
       sunDir: V(range(r, 0.2, 0.45) * sign(r), 1, 0.22), sunC: C('#fff0cc'), sunI: 2.7, amb: C('#c49a78'), grd: C('#7a4a26'),
       floorSun: V(0.7 * sign(r), 0.22, -0.3), floorSunK: 0.7,
       fog: C('#d09868'), fogD: 0.01, bg: C('#f3d6a6'), exp: 0.85, bloom: 0.55, rays: 1.0, raysColor: C('#ffd6a0'), raysThreshold: 1.05,
-      lit: C('#e8903c'), hi: C('#fff0c0'), shade: C('#3a1208'), rim: C('#ffe0b0'), glit: C('#fff6e0'), pools: true, glitter: 1.1,
+      lit: C('#e8903c'), hi: C('#fff0c0'), shade: C('#64301a'), rim: C('#ffe0b0'), glit: C('#fff6e0'), pools: true, glitter: 1.1,
       vigColor: C('#4a2410'), vignette: 0.42, fade: C('#fff1d8'), mood: 5, sand: C('#ffcf90'),
       dust: { color: C('#ffe2b8'), amount: 0.45, size: 0.05, opacity: 0.55 },
     });
@@ -94,9 +148,12 @@ export class SandHall extends Room {
   _buildArchitecture() {
     const r = this.rng, s = this.scene;
     s.background = this.pal.bg;
-    const wall = stoneMat(0xd8b88a, 0x4a2a14, 0.45, 2.4), dark = stoneMat(0xb08a62, 0x3a2010, 0.5, 2.2);
-    const gold = new THREE.MeshStandardMaterial({ color: 0xe8b860, roughness: 0.45, metalness: 0.5, emissive: 0x6a3a08, emissiveIntensity: 0.7 });
-    this.mats = { wall, dark, gold };
+    const box = [-HW, HW, Z0, Z1], bounce = C('#ff9a48').multiplyScalar(0.2), sandC = C('#e6a860');
+    const wall = stoneMat(0xd8b88a, 0x4a2a14, 0.16, 2.4, { box, sandY: 2.5, sand: sandC, bounce, strata: 0.62, aoH: 6, ao: 0.5, block: [2.6, 1.05], cracks: 0.5 });
+    const dark = stoneMat(0xb08a62, 0x3a2010, 0.18, 2.2, { box, strata: 0.9, bounce, ao: 0.62, aoH: 4 });
+    const colM = stoneMat(0xd8b88a, 0x4a2a14, 0.16, 2.4, { sandY: 0.5, sand: sandC, bounce, strata: 1.1, tile: 0.22, aoH: 5, ao: 0.55, block: [1000, 1.6], cracks: 0.4 });
+    const gold = this.gold({ emissive: 0x6a3a08, ei: 0.4 });
+    this.mats = { wall, dark, gold, col: colM };
     // walls (the front one leaves the doorway open)
     for (const sx of [-1, 1]) this.box(1.4, WALL_H, Z1 - Z0 + 2.8, wall, sx * (HW + 0.7), -1, (Z0 + Z1) / 2);
     this.box(HW * 2 + 2.8, WALL_H, 1.4, wall, 0, -1, Z0 - 0.7);
@@ -111,9 +168,12 @@ export class SandHall extends Room {
     const glyphTex = [0, 1, 2, 3, 4, 5].map(makeGlyphSprite);
     for (let i = 0; i < 8; i++) {
       const sx = i % 2 ? 1 : -1, z = -4 - i * 6.5;
-      const m = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 1.6), new THREE.MeshBasicMaterial({ map: glyphTex[i % 6], color: new THREE.Color(0.9, 0.55, 0.25), transparent: true, depthWrite: false }));
-      m.position.set(sx * (HW - 0.06), 6.8, z); m.rotation.y = -sx * Math.PI / 2;
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 1.5), new THREE.MeshStandardMaterial({ color: 0xe8b860, roughness: 0.32, metalness: 0.9, envMap: null, map: glyphTex[i % 6], alphaTest: 0.55, emissive: 0x6a3a08, emissiveIntensity: 0.5, side: THREE.DoubleSide }));
+      (this.envMats = this.envMats || []).push(m.material);
+      m.position.set(sx * (HW - 0.37), 6.8, z); m.rotation.y = -sx * Math.PI / 2;
       s.add(m);
+      this.box(0.3, 2.3, 2.3, dark, sx * (HW - 0.15), 5.65, z, 0, false);   // a slab the glyph is inlaid into
+      this.box(0.36, 2.0, 2.0, wall, sx * (HW - 0.18), 5.8, z, 0, false);
     }
     // two rows of columns, some broken and leaning, sunk into the sand
     this.columns = [];
@@ -121,10 +181,10 @@ export class SandHall extends Room {
       const x = sx * range(r, 6.6, 7.4), z = -5 - i * 8.2 + range(r, -0.6, 0.6);
       const gy = this.height(x, z);
       const broken = r() < 0.3, h = broken ? range(r, 3, 7) : WALL_H - 1.2;
-      const c = this.column(x, z, gy - 1.0, 0.85, h + 1.0, wall, true);
-      if (!broken) { this.box(2.2, 0.7, 2.2, wall, x, h - 0.2, z, 0, false); }
+      const c = this.column(x, z, gy - 1.0, 0.85, h + 1.0, colM, true, 16);
+      if (!broken) { this.box(2.2, 0.7, 2.2, dark, x, h - 0.2, z, 0, false); }
       else if (r() < 0.6) {
-        const d = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 0.8, 2.0, 12), dark);
+        const d = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 0.8, 2.0, 16), colM);
         d.rotation.z = Math.PI / 2; d.rotation.y = range(r, 0, 3);
         const dx = x - sx * 2.4, dz = z + range(r, -2, 2);
         d.position.set(dx, this.height(dx, dz) + 0.35, dz); s.add(d);
@@ -179,13 +239,39 @@ export class SandHall extends Room {
         this.scene.add(mesh);
       }
       // a dark crack where it comes through
-      const crack = new THREE.Mesh(new THREE.PlaneGeometry(f.w * 1.4, 1.6), new THREE.MeshBasicMaterial({ color: 0x2a1408 }));
+      const crack = new THREE.Mesh(new THREE.PlaneGeometry(f.w * 1.7, 2.4), new THREE.MeshBasicMaterial({ map: crackTex(), color: 0xffffff, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1 }));
       if (f.big) { crack.position.set(f.x, f.top, Z0 + 0.02); }
       else { crack.position.set(f.x - Math.sign(f.x) * 0.02, f.top, f.z); crack.rotation.y = -Math.sign(f.x) * Math.PI / 2; }
       this.scene.add(crack);
       // a stream of sand flowing from its foot toward the middle of the hall
       this._flow(f);
     }
+    this._spray();
+  }
+
+  /** Grains thrown up and a soft billow where each fall lands. */
+  _spray() {
+    const N = 46, n = this.falls.length * N, org = new Float32Array(n * 3), dir = new Float32Array(n * 2), sd = new Float32Array(n * 4), r = this.rng;
+    this.falls.forEach((f, k) => {
+      const nx = f.big ? 0 : -Math.sign(f.x), nz = f.big ? 1 : 0;
+      for (let i = 0; i < N; i++) {
+        const o = k * N + i, a = (r() - 0.5) * Math.PI * 1.3, c = Math.cos(a), sn = Math.sin(a);
+        org[o * 3] = f.x + nx * 0.45 + (r() - 0.5) * f.w * 0.5; org[o * 3 + 1] = f.y + 0.1; org[o * 3 + 2] = f.z + nz * 0.45 + (r() - 0.5) * (f.big ? f.w * 0.5 : 0.6);
+        dir[o * 2] = nx * c - nz * sn; dir[o * 2 + 1] = nz * c + nx * sn;
+        for (let q = 0; q < 4; q++) sd[o * 4 + q] = r();
+      }
+      const bill = new THREE.Sprite(new THREE.SpriteMaterial({ map: radialTex('rgba(255,255,255,0.9)', 'rgba(255,255,255,0.3)'), color: C('#e8a860').multiplyScalar(f.big ? 0.5 : 0.32), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0.6 }));
+      bill.position.set(f.x + nx * 0.9, f.y + 0.9, f.z + nz * 0.9); bill.scale.set(f.big ? 7 : 4, f.big ? 4.2 : 2.6, 1);
+      this.scene.add(bill); (this.billows = this.billows || []).push(bill);
+    });
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * 3), 3)); g.setAttribute('aOrg', new THREE.BufferAttribute(org, 3));
+    g.setAttribute('aDir', new THREE.BufferAttribute(dir, 2)); g.setAttribute('aSeed', new THREE.BufferAttribute(sd, 4));
+    g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e4);
+    this.sprayU = { uTime: { value: 0 }, uScale: { value: 600 }, uColor: { value: C('#ffd9a0').multiplyScalar(1.1) } };
+    const pts = new THREE.Points(g, new THREE.ShaderMaterial({ uniforms: this.sprayU, vertexShader: sprayVert, fragmentShader: sprayFrag, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+    pts.frustumCulled = false; pts.renderOrder = 5;
+    this.scene.add(pts);
   }
 
   _flow(f) {
@@ -270,6 +356,8 @@ export class SandHall extends Room {
     this.doorGlow(time);
     for (const m of this.fallMats) m.uniforms.uTime.value = time;
     this.dustMotes.userData.tick(time, ctx.camera, ctx.renderer);
+    this.sprayU.uTime.value = time; this.sprayU.uScale.value = ctx.renderer.domElement.height / (2 * Math.tan(THREE.MathUtils.degToRad(ctx.camera.fov) / 2));
+    this.billows.forEach((b, i) => { b.material.opacity = 0.5 + 0.12 * Math.sin(time * 0.9 + i * 2); });
     // sand spilling where the falls hit
     for (const f of this.falls) {
       if (Math.random() < dt * (f.big ? 14 : 6)) {

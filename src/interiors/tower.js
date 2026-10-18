@@ -3,7 +3,8 @@
 // where a tablet remembers the travelers who flew here before. A second doorway up there leads straight back out.
 import * as THREE from 'three';
 import { Room, C, V, stoneMat, sandFloor, lightShaft, motes, makeAmbience, radialTex } from './common.js';
-import { clothUniforms, clothFrag } from '../world/cloth.js';
+import { fabricMat } from './surface.js';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { Updrafts } from '../world/updrafts.js';
 import { smooth, clamp } from '../world/heightfield.js';
 import { range } from '../world/seed.js';
@@ -93,9 +94,12 @@ export class Tower extends Room {
   _buildShell() {
     const s = this.scene, r = this.rng;
     s.background = this.pal.bg;
-    const wall = stoneMat(0xd8c4a4, 0x3a2a1c, 0.5, 2.6), dark = stoneMat(0xa88a6a, 0x2a1a10, 0.5, 2.2);
-    const gold = new THREE.MeshStandardMaterial({ color: 0xe8b860, roughness: 0.45, metalness: 0.5, emissive: 0x6a3a08, emissiveIntensity: 0.7 });
+    const bounce = C('#ffd8a8').multiplyScalar(0.3), sandC = C('#f6dcae');
+    const wall = stoneMat(0xf0cc98, 0x6a4424, 0.5, 2.6, { polar: RT + 0.4, block: [3.0, 1.25], strata: 0.42, sandY: 1.6, sand: sandC, bounce, aoH: 10, ao: 0.72, cracks: 0.5 });
+    const dark = stoneMat(0xa88a6a, 0x2a1a10, 0.2, 2.2, { slab: 1.5, strata: 0.8, bounce, aoH: 3, ao: 0.7 });
+    const gold = this.gold({ emissive: 0x6a3a08, ei: 0.4 });
     this.mats = { wall, dark, gold };
+    this.sandBase = sandC;
     const band = (y0, y1, gapAt) => {
       const g = gapAt === null ? new THREE.CylinderGeometry(RT + 0.4, RT + 0.4, y1 - y0, 48, 1, true)
         : new THREE.CylinderGeometry(RT + 0.4, RT + 0.4, y1 - y0, 48, 1, true, gapAt + GAP, Math.PI * 2 - 2 * GAP);
@@ -108,7 +112,7 @@ export class Tower extends Room {
     band(TOPY + DOOR_H + 0.6, TH, null);
     // gold rings and slit windows that throw thin blades of light across the shaft
     for (let y = 9; y < TH; y += 11) {
-      const t = new THREE.Mesh(new THREE.TorusGeometry(RT + 0.25, 0.14, 6, 64), gold); t.rotation.x = Math.PI / 2; t.position.y = y; s.add(t);
+      const t = new THREE.Mesh(new THREE.TorusGeometry(RT + 0.25, 0.14, 10, 96), gold); t.rotation.x = Math.PI / 2; t.position.y = y; s.add(t);
     }
     const slitMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(3, 2.6, 2), fog: false, side: THREE.DoubleSide });
     for (let i = 0; i < 7; i++) {
@@ -122,11 +126,11 @@ export class Tower extends Room {
     // the sky above the open top
     const sky = new THREE.Mesh(new THREE.CircleGeometry(RT + 2, 32), new THREE.MeshBasicMaterial({ color: new THREE.Color(2.4, 2.3, 2.1), fog: false }));
     sky.rotation.x = Math.PI / 2; sky.position.y = TH + 0.5; s.add(sky);
-    this.addShaft(lightShaft(new THREE.Vector3(0, TH, 0), new THREE.Vector3(0, 0, 0), RT * 0.75, RT * 0.5, C('#fff0d8').multiplyScalar(0.25), 0.6, { topFade: 0.02, bottomFade: 0.3 }));
+    this.addShaft(lightShaft(new THREE.Vector3(0, TH, 0), new THREE.Vector3(0, 0, 0), RT * 0.75, RT * 0.5, C('#fff0d8').multiplyScalar(0.25), 0.6, { topFade: 0.02, bottomFade: 0.3, haze: false }));
     this.sun.position.copy(this.pal.sunDir).multiplyScalar(60); this.sun.target.position.set(0, 0, 0);
     // floor
     this.addSand(sandFloor((x, z) => this.height(x, z, 0), -RT - 0.5, RT + 0.5, -RT - 0.5, RT + 1.6, 0.4, (x, z) => Math.hypot(x, z) < RT + 1.2));
-    this.sandFloors[0].userData.sandU.uPools.value[0].set(0, 0, 4.5, 0.8);
+    this.sandFloors[0].userData.sandU.uPools.value[0].set(0, 0, 4.5, 0.5);
     // a stone dais around the foot of the wind
     const dais = new THREE.Mesh(new THREE.TorusGeometry(COL_R + 0.6, 0.16, 6, 48), gold); dais.rotation.x = Math.PI / 2; dais.position.y = 0.1; s.add(dais);
     // doorways: at the foot, and one at the top gallery
@@ -145,8 +149,8 @@ export class Tower extends Room {
     this.ledgeMats = [];
     const ropes = [];
     this.platforms.forEach((p, i) => {
-      const m = new THREE.ShaderMaterial({ uniforms: { ...clothUniforms, uSeed: { value: i * 3.1 } }, vertexShader: ledgeVert, fragmentShader: clothFrag, side: THREE.DoubleSide });
-      const mesh = new THREE.Mesh(arcGeometry(p.a - p.span / 2, p.a + p.span / 2, p.r0 - 0.2, RT + 0.1, p.y), m);
+      const m = fabricMat(ledgeVert, { uSeed: { value: i * 3.1 } }, { maxU: 3, weave: [120, 300], hem: [0.03, 0.02], glowK: 0.3, colA: [0.3, 0.02, 0.015], colB: [0.78, 0.12, 0.04], sheen: 0.35, trans: 0.6 });
+      const mesh = new THREE.Mesh(arcGeometry(p.a - p.span / 2, p.a + p.span / 2, p.r0 - 0.2, RT + 0.1, p.y, 24, 6), m);
       mesh.frustumCulled = false;
       s.add(mesh);
       this.ledgeMats.push(m);
@@ -157,8 +161,14 @@ export class Tower extends Room {
       }
       this.pois.push({ x: Math.sin(p.a) * 6.5, y: p.y + 1, z: Math.cos(p.a) * 6.5 });
     });
-    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(ropes, 3));
-    s.add(new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: 0x8a5a30 })));
+    // twisted cords, each a thin tube from the wall to the free edge's corner
+    const cords = [];
+    for (let k = 0; k < ropes.length; k += 6) {
+      const a = new THREE.Vector3(ropes[k], ropes[k + 1], ropes[k + 2]), b = new THREE.Vector3(ropes[k + 3], ropes[k + 4], ropes[k + 5]);
+      const mid = a.clone().lerp(b, 0.5); mid.y -= 0.25;
+      cords.push(new THREE.TubeGeometry(new THREE.QuadraticBezierCurve3(a, mid, b), 6, 0.025, 5));
+    }
+    s.add(new THREE.Mesh(mergeGeometries(cords), new THREE.MeshStandardMaterial({ color: 0x8a5a30, roughness: 0.9, emissive: 0x2a1408, emissiveIntensity: 0.6 })));
     // long banners hanging down the wall between the ledges
     for (let i = 0; i < 5; i++) {
       const a = this.platforms[i].a + Math.PI * 0.5 + i, len = 10 + i * 1.5, y = 12 + i * 8;
@@ -166,11 +176,13 @@ export class Tower extends Room {
       const ra = new Float32Array(pg.attributes.position.count * 2);
       for (let k = 0; k < pg.attributes.position.count; k++) { ra[k * 2] = 1 + pg.attributes.position.getY(k) / len; ra[k * 2 + 1] = pg.attributes.uv.getX(k); }
       pg.setAttribute('aRA', new THREE.BufferAttribute(ra, 2));
-      const m = new THREE.Mesh(pg, new THREE.ShaderMaterial({ uniforms: { ...clothUniforms, uSeed: { value: i } }, vertexShader: /* glsl */`
+      const m = new THREE.Mesh(pg, fabricMat(/* glsl */`
         attribute vec2 aRA; uniform float uTime, uSeed; varying vec2 vUv; varying float vGlow; varying vec3 vN; varying vec3 vW;
-        void main() { vec3 p = position; float f = 1. - aRA.x; p.z += sin(uTime * 1.7 + p.y * 0.5 + uSeed) * 0.35 * f;
-          vec4 wp = modelMatrix * vec4(p, 1.); vW = wp.xyz; vN = normalize(mat3(modelMatrix) * vec3(0., 0., 1.)); vUv = vec2(aRA.x, aRA.y); vGlow = 0.2;
-          gl_Position = projectionMatrix * viewMatrix * wp; }`, fragmentShader: clothFrag, side: THREE.DoubleSide }));
+        void main() { vec3 p = position; float f = 1. - aRA.x; float w = sin(uTime * 1.7 + p.y * 0.5 + uSeed) * 0.35 * f;
+          p.z += w + 0.07 * sin(p.x * 6. + p.y * 1.3 + uTime * 0.8 + uSeed) * f;   // folds running down the cloth
+          vec3 n0 = normalize(vec3(0., -0.35 * 0.5 * cos(uTime * 1.7 + p.y * 0.5 + uSeed) * f, 1.) + vec3(0.07 * 6. * cos(p.x * 6. + p.y * 1.3 + uTime * 0.8 + uSeed) * f * 0.4, 0., 0.));
+          vec4 wp = modelMatrix * vec4(p, 1.); vW = wp.xyz; vN = normalize(mat3(modelMatrix) * n0); vUv = vec2(aRA.x, aRA.y); vGlow = 0.2;
+          gl_Position = projectionMatrix * viewMatrix * wp; }`, { uSeed: { value: i } }, { maxU: 1, weave: [900, 110], hem: [0.012, 0.06], glowK: 0.2 }));
       m.position.set(Math.sin(a) * (RT - 0.15), y, Math.cos(a) * (RT - 0.15)); m.rotation.y = a + Math.PI;
       m.frustumCulled = false;
       s.add(m);

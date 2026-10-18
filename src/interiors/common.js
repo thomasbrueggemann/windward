@@ -2,19 +2,15 @@
 // interior exit doors and a tiny procedural ambience layer on top of the AudioEngine.
 import * as THREE from 'three';
 import { makeSandUniforms, makeSandMaterial } from '../world/terrain.js';
-import { makeStoneBump } from '../textures.js';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { stoneMat, goldMat, makeEnv } from './surface.js';
 import { rngFor } from '../world/seed.js';
 import { clamp } from '../world/heightfield.js';
 
 const C = (h) => new THREE.Color(h);
 const V = (x, y, z) => new THREE.Vector3(x, y, z).normalize();
 
-let _bump = null;
-const bump = () => { if (!_bump) { _bump = makeStoneBump(); _bump.repeat.set(2, 2); } return _bump; };
-
-export function stoneMat(color, emissive = 0x000000, ei = 0.5, bumpScale = 2) {
-  return new THREE.MeshStandardMaterial({ color, roughness: 0.95, metalness: 0, bumpMap: bump(), bumpScale, emissive, emissiveIntensity: ei });
-}
+export { stoneMat };
 
 export function canvasTex(w, h, draw, srgb = true) {
   const c = document.createElement('canvas'); c.width = w; c.height = h;
@@ -45,11 +41,12 @@ export function doorLightTex() {
   });
 }
 
-// ------------------------------------------------------------------ light shafts (additive soft cylinders)
+// ------------------------------------------------------------------ light shafts (additive soft cones: core + haze, drifting dust)
 const beamVert = /* glsl */`
-varying vec2 vUv; varying float vEdge; varying vec3 vW;
+attribute float aLayer;
+varying vec2 vUv; varying float vEdge; varying vec3 vW; varying float vL;
 void main() {
-  vUv = uv;
+  vUv = uv; vL = aLayer;
   vec4 wp = modelMatrix * vec4(position, 1.);
   vW = wp.xyz;
   vec3 n = normalize(mat3(modelMatrix) * normal);
@@ -60,19 +57,35 @@ void main() {
 const beamFrag = /* glsl */`
 precision highp float;
 uniform vec3 uColor; uniform float uTime, uIntensity, uTop, uBottom;
-varying vec2 vUv; varying float vEdge; varying vec3 vW;
+varying vec2 vUv; varying float vEdge; varying vec3 vW; varying float vL;
+float hb(vec2 p){ return fract(sin(dot(p, vec2(41.3, 289.1))) * 43758.5453); }
+float nb(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.-2.*f); return mix(mix(hb(i), hb(i+vec2(1,0)), f.x), mix(hb(i+vec2(0,1)), hb(i+vec2(1,1)), f.x), f.y); }
 void main() {
-  float e = pow(vEdge, 1.6);
-  float along = smoothstep(0., uBottom, vUv.y) * smoothstep(1., 1. - uTop, vUv.y) * (0.45 + 0.55 * vUv.y);
-  float motes = 0.82 + 0.18 * sin(vUv.y * 37. - uTime * 0.6 + vUv.x * 25.) * sin(vUv.x * 61. + uTime * 0.3);
-  float a = e * along * motes * uIntensity;
-  gl_FragColor = vec4(uColor * a, a);
+  float core = 1. - vL;
+  float e = pow(vEdge, mix(1.1, 2.1, core));
+  float along = smoothstep(0., uBottom, vUv.y) * smoothstep(1., 1. - uTop, vUv.y) * (0.4 + 0.6 * vUv.y);
+  // slow sheets and streaks of dust crossing the beam
+  vec2 q = vec2(vUv.x * 11., vUv.y * 2.6 - uTime * 0.04);
+  float n = nb(q + vec2(sin(vUv.y * 5. - uTime * 0.07), cos(vUv.x * 9. + uTime * 0.05)) * 0.8) * 0.65 + nb(vec2(vUv.x * 40., vUv.y * 9. - uTime * 0.1)) * 0.35;
+  float dens = 0.45 + 1.0 * n;
+  // single grains catching the light
+  vec2 cell = vec2(vUv.x * 90., vUv.y * 160. - uTime * 0.35);
+  float hh = hb(floor(cell)), gl = step(0.955, hh) * smoothstep(0.4, 0., length(fract(cell) - 0.5)) * (0.5 + 0.5 * sin(uTime * 2.3 + hh * 80.));
+  float near = smoothstep(0.4, 3.5, distance(cameraPosition, vW));
+  float a = e * along * dens * uIntensity * mix(0.45, 1., core) * near;
+  float g = gl * e * along * uIntensity * 0.9 * core * near;
+  gl_FragColor = vec4(uColor * (a + g * 2.2), a + g);
 }`;
 /** A soft shaft of light from `top` down to `bottom` (Vector3s), radius r0 at the top, r1 at the bottom. */
-export function lightShaft(top, bottom, r0, r1, color, intensity = 1, { topFade = 0.08, bottomFade = 0.12 } = {}) {
+export function lightShaft(top, bottom, r0, r1, color, intensity = 1, { topFade = 0.08, bottomFade = 0.12, haze = true } = {}) {
   const len = top.distanceTo(bottom);
-  const geo = new THREE.CylinderGeometry(r0, r1, len, 20, 1, true);
-  geo.translate(0, -len / 2, 0);
+  const mk = (k, layer) => {
+    const g = new THREE.CylinderGeometry(r0 * k, r1 * k, len, 24, 1, true);
+    g.translate(0, -len / 2, 0);
+    g.setAttribute('aLayer', new THREE.BufferAttribute(new Float32Array(g.attributes.position.count).fill(layer), 1));
+    return g;
+  };
+  const geo = haze ? mergeGeometries([mk(1, 0), mk(1.55, 1)]) : mk(1, 0);
   const mat = new THREE.ShaderMaterial({
     uniforms: { uColor: { value: color.clone() }, uTime: { value: 0 }, uIntensity: { value: intensity }, uTop: { value: topFade }, uBottom: { value: bottomFade } },
     vertexShader: beamVert, fragmentShader: beamFrag, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, fog: false,
@@ -113,9 +126,62 @@ export function sandFloor(fn, x0, x1, z0, z1, step = 0.5, keep = null) {
   g.computeBoundingSphere();
   const u = makeSandUniforms();
   const mat = makeSandMaterial(u);
+  detailSand(mat);
   const mesh = new THREE.Mesh(g, mat);
   mesh.userData.sandU = mat.uniforms;
   return mesh;
+}
+
+// extra ripple detail, sparkle and wall occlusion for the indoor sand (patched into the open world's sand shader; no-ops if it changed)
+const sandDecl = /* glsl */`
+uniform vec4 uWall; uniform vec3 uCirc; uniform float uWallK;
+float jh(vec2 p){ return fract(sin(dot(p, vec2(41.3, 289.1))) * 43758.5453); }
+vec2 jh2(vec2 p){ p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3))); return fract(sin(p) * 43758.5453); }
+float jv(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.-2.*f); return mix(mix(jh(i), jh(i+vec2(1,0)), f.x), mix(jh(i+vec2(0,1)), jh(i+vec2(1,1)), f.x), f.y); }
+vec3 roomDetail(vec3 N, vec3 P, float dist){
+  float near = 1. - smoothstep(8., 55., dist);
+  vec2 wd = normalize(vec2(0.86, 0.5));
+  float warp = (jv(P.xz * 0.31) - 0.5) * 3.4 + (jv(P.xz * 1.3) - 0.5) * 0.8;
+  float s = dot(P.xz, wd) * 15. + warp * 2.;
+  float r1 = cos(s - 0.9 * sin(s)) * (1. - 0.75 * cos(s));
+  vec2 wd2 = vec2(-wd.y, wd.x);
+  float s2 = dot(P.xz, wd2) * 31. + (jv(P.xz * 0.9) - 0.5) * 9.;
+  float r2 = cos(s2 - 0.6 * sin(s2));
+  float patch_ = smoothstep(0.25, 0.7, jv(P.xz * 0.12 + 3.));
+  N.xz -= wd * r1 * 0.05 * near * (0.35 + 0.65 * patch_) + wd2 * r2 * 0.016 * near * patch_;
+  vec2 g = vec2(jh(floor(P.xz * 70.)), jh(floor(P.xz * 70.) + 4.2)) - 0.5;
+  N.xz += g * 0.05 * near;
+  return normalize(N);
+}
+float roomSparkle(vec2 pxz, vec3 H, vec3 Ng, float dist){
+  float acc = 0.;
+  for (int i = 0; i < 2; i++) {
+    float cs = i == 0 ? 0.04 : 0.1;
+    vec2 cell = floor(pxz / cs), r = jh2(cell + float(i) * 7.3);
+    float present = step(i == 0 ? 0.9 : 0.94, jh(cell + 5.1 + float(i)));
+    vec3 rn = normalize(Ng + (vec3(r.x, jh(cell + 1.7), r.y) - 0.5) * vec3(1.7, 0.9, 1.7));
+    float tw = 0.45 + 0.55 * sin(uTime * (1.5 + 3. * r.x) + r.y * 40.);
+    acc += present * pow(clamp(dot(rn, H), 0., 1.), 160.) * tw * (i == 0 ? 1. : 1.6);
+  }
+  return acc * (1. - smoothstep(9., 38., dist));
+}
+float roomAO(vec2 p){
+  float d = uWallK > 0. ? (uCirc.z > 0. ? uCirc.z - length(p - uCirc.xy) : min(min(p.x - uWall.x, uWall.y - p.x), min(p.y - uWall.z, uWall.w - p.y))) : 9.;
+  d += (jv(p * 0.8) - 0.5) * 0.8;
+  return 1. - uWallK * (1. - smoothstep(0., 3.4, d));
+}
+`;
+function detailSand(mat) {
+  mat.uniforms.uWall = { value: new THREE.Vector4(-1e3, 1e3, -1e3, 1e3) }; mat.uniforms.uCirc = { value: new THREE.Vector3(0, 0, 0) }; mat.uniforms.uWallK = { value: 0 };
+  mat.onBeforeCompile = (sh) => {
+    let f = sh.fragmentShader;
+    f = f.replace(/void\s+main\s*\(\s*\)\s*\{/, sandDecl + 'void main(){');
+    f = f.replace('vec3 N = rippleNormal(Ng, vWorld, dist);', 'vec3 N = rippleNormal(Ng, vWorld, dist); N = roomDetail(N, vWorld, dist);');
+    f = f.replace('// --- aerial perspective', 'col *= roomAO(vWorld.xz);\n  // --- aerial perspective');
+    f = f.replace('col = col + spec * (1. - snowAmt * 0.5) + glitter;', 'col = col + spec * (1. - snowAmt * 0.5) + glitter + uGlit * roomSparkle(vWorld.xz, H, Ng, dist) * 3.2 * uGlitterGain * (0.3 + 0.7 * tone);');
+    sh.fragmentShader = f;
+  };
+  mat.customProgramCacheKey = () => 'jsandx1';
 }
 
 /** Light a sand floor from a room palette ({sunDir, sunC, sunI, lit, hi, shade, rim, glit, fog, amb, fogD}). */
@@ -136,8 +202,8 @@ export function disposeScene(root) {
     const mats = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : [];
     for (const m of mats) {
       if (seen.has(m)) continue; seen.add(m);
-      for (const k in m) { const v = m[k]; if (v && v.isTexture && v !== _bump && !seen.has(v)) { seen.add(v); v.dispose(); } }
-      if (m.uniforms) for (const k in m.uniforms) { const v = m.uniforms[k].value; if (v && v.isTexture && v !== _bump && !seen.has(v)) { seen.add(v); v.dispose(); } }
+      for (const k in m) { const v = m[k]; if (v && v.isTexture && !seen.has(v)) { seen.add(v); v.dispose(); } }
+      if (m.uniforms) for (const k in m.uniforms) { const v = m.uniforms[k].value; if (v && v.isTexture && !seen.has(v)) { seen.add(v); v.dispose(); } }
       m.dispose();
     }
   });
@@ -288,7 +354,20 @@ export class Room {
     for (const s of this.shafts) s.material.uniforms.uTime.value = time;
   }
 
-  addSand(mesh) { this.sandFloors.push(mesh); this.scene.add(mesh); lightSand(mesh.userData.sandU, this.pal); return mesh; }
+  addSand(mesh, wallK = 0.4) {
+    this.sandFloors.push(mesh); this.scene.add(mesh); lightSand(mesh.userData.sandU, this.pal);
+    const u = mesh.userData.sandU, b = this.bounds;
+    if (b && u.uWall) { if (b.circle) u.uCirc.value.set(b.cx || 0, b.cz || 0, b.circle); else u.uWall.value.set(b.x0, b.x1, b.z0, b.z1); u.uWallK.value = wallK; }
+    return mesh;
+  }
+  /** Gold trim, lit by the room's little environment (set in prepare()). */
+  gold(o) { const m = goldMat(null, o); (this.envMats = this.envMats || []).push(m); return m; }
+  /** Called once with the renderer before the first compile: builds the environment the metals reflect. */
+  prepare(renderer) {
+    const P = this.pal, e = P.env || {};
+    this.envRT = makeEnv(renderer, { top: e.top || P.bg.clone().multiplyScalar(1.2), hor: e.hor || P.fog.clone().multiplyScalar(1.1), bot: e.bot || P.sand.clone().multiplyScalar(0.55), sun: e.sun || P.sunC.clone().multiplyScalar(P.sunI * 0.55), sunDir: P.sunDir });
+    for (const m of this.envMats || []) { m.envMap = this.envRT.texture; m.needsUpdate = true; }
+  }
   addShaft(m) { this.shafts.push(m); this.scene.add(m); return m; }
 
   /** A box mesh (+ optional collider). rotY in radians; y is the bottom. */
@@ -362,6 +441,7 @@ export class Room {
     this.onExit();
     if (this.updrafts) this.updrafts = null;
     disposeScene(this.scene);
+    if (this.envRT) { this.envRT.dispose(); this.envRT = null; }
   }
 }
 
@@ -382,7 +462,7 @@ export function motes(n, box, { color = new THREE.Color(1, 0.9, 0.7), size = 0.0
     uniforms: u, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
     vertexShader: /* glsl */`
       attribute vec4 aSeed; uniform float uTime, uScale, uSize, uSpeed, uRise, uH, uY0;
-      varying float vA;
+      varying float vA, vG;
       void main() {
         vec3 p = position;
         float t = uTime * uSpeed;
@@ -392,11 +472,12 @@ export function motes(n, box, { color = new THREE.Color(1, 0.9, 0.7), size = 0.0
         vec4 mv = viewMatrix * vec4(p, 1.);
         gl_Position = projectionMatrix * mv;
         vA = (0.4 + 0.6 * sin(uTime * (1.0 + 2.0 * aSeed.w) + aSeed.y * 40.) * 0.5 + 0.5) * smoothstep(0.5, 2.5, -mv.z);
+        vG = pow(0.5 + 0.5 * sin(uTime * (2. + 5. * aSeed.z) + aSeed.x * 90.), 14.);   // brief glints as a grain turns to the light
         gl_PointSize = clamp(uSize * (0.6 + aSeed.x) * uScale / max(0.1, -mv.z), 1., 30.);
       }`,
     fragmentShader: /* glsl */`
-      precision highp float; uniform vec3 uColor; uniform float uAlpha; varying float vA;
-      void main() { float d = length(gl_PointCoord - 0.5) * 2.; float a = smoothstep(1., 0., d); gl_FragColor = vec4(uColor * a * vA * uAlpha, a * vA * uAlpha); }`,
+      precision highp float; uniform vec3 uColor; uniform float uAlpha; varying float vA, vG;
+      void main() { float d = length(gl_PointCoord - 0.5) * 2.; float a = smoothstep(1., 0., d); float core = smoothstep(0.35, 0., d); gl_FragColor = vec4(uColor * (a * 0.7 + core * (0.8 + vG * 3.5)) * vA * uAlpha, a * vA * uAlpha); }`,
   });
   const pts = new THREE.Points(g, m);
   pts.frustumCulled = false; pts.renderOrder = 4;

@@ -3,7 +3,8 @@
 // cloth creature comes out to travel with you.
 import * as THREE from 'three';
 import { Room, C, V, stoneMat, sandFloor, lightShaft, motes, makeAmbience, radialTex } from './common.js';
-import { clothUniforms, clothFrag } from '../world/cloth.js';
+import { fabricMat, noiseTex } from './surface.js';
+import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { smooth, clamp } from '../world/heightfield.js';
 import { range } from '../world/seed.js';
 
@@ -84,7 +85,9 @@ export class Garden extends Room {
   _buildCave() {
     const s = this.scene, r = this.rng;
     s.background = this.pal.bg;
-    const rock = stoneMat(0x1c3048, 0x061020, 1.0, 3);
+    const glowC = C('#2a8aa8');
+    const rockOpts = { tile: 0.12, strata: 0.7, ao: 0.4, aoH: 4.5, bounce: glowC.clone().multiplyScalar(0.4), cracks: 0.9, sand: C('#2a4e60'), sandY: 0.9 };
+    const rock = stoneMat(0x44688a, 0x0a2240, 1.0, 3, { ...rockOpts, bounce: glowC.clone().multiplyScalar(0.3) });
     this.rockMat = rock;
     // the vault: a squashed dome of rough rock
     const dome = new THREE.SphereGeometry(R + 3, 48, 24, 0, Math.PI * 2, 0, Math.PI * 0.62);
@@ -96,9 +99,25 @@ export class Garden extends Room {
       p.setXYZ(i, x * k, y * 0.5 * k, z * k);
     }
     dome.computeVertexNormals();
-    const domeM = new THREE.Mesh(dome, new THREE.MeshStandardMaterial({ color: 0x1a2c44, roughness: 1, side: THREE.BackSide, emissive: 0x040c18, emissiveIntensity: 1, bumpMap: rock.bumpMap, bumpScale: 3 }));
+    const vault = stoneMat(0x44688a, 0x0e2a48, 1.1, 3, { ...rockOpts, sandY: -99, strata: 0.5, ao: 0.55, floorY: 2, aoH: 7, bump: 0.08, bounce: C('#3aa0c0').multiplyScalar(0.3) });
+    vault.side = THREE.BackSide;
+    const domeM = new THREE.Mesh(dome, vault);
     domeM.position.y = -2.5;
     s.add(domeM);
+    // stalactites hanging from the vault: one instanced draw
+    const cone = new THREE.ConeGeometry(0.5, 1, 9, 3, true); cone.translate(0, -0.5, 0);
+    const cp = cone.attributes.position;
+    for (let i = 0; i < cp.count; i++) { const k = 1 + 0.18 * Math.sin(cp.getY(i) * 9 + cp.getX(i) * 7); cp.setX(i, cp.getX(i) * k); cp.setZ(i, cp.getZ(i) * k); }
+    cone.computeVertexNormals();
+    const NS = 56, st = new THREE.InstancedMesh(cone, vault.clone(), NS), M4 = new THREE.Matrix4(), Q = new THREE.Quaternion(), E = new THREE.Euler();
+    st.material.side = THREE.DoubleSide;
+    for (let i = 0; i < NS; i++) {
+      const a = r() * Math.PI * 2, d = Math.sqrt(r()) * (R + 1), yTop = (R + 3) * 0.5 * Math.sqrt(Math.max(0, 1 - (d / (R + 3)) ** 2)) * 1.03 - 2.5 + 0.35;
+      const w = range(r, 0.35, 1.1), len = range(r, 0.8, 3.4);
+      E.set(range(r, -0.06, 0.06), r() * 6, range(r, -0.06, 0.06)); Q.setFromEuler(E);
+      M4.compose(new THREE.Vector3(Math.cos(a) * d, yTop, Math.sin(a) * d), Q, new THREE.Vector3(w, len, w)); st.setMatrixAt(i, M4);
+    }
+    s.add(st);
     // a crack of moonlight high in the vault, falling on the heart
     const top = new THREE.Vector3(1.2, 8.6, -0.8), bottom = new THREE.Vector3(0, this.height(0, 0), 0);
     this.addShaft(lightShaft(top, bottom, 1.0, 2.6, C('#8ccfff').multiplyScalar(0.7), 0.9));
@@ -116,7 +135,9 @@ export class Garden extends Room {
       const a = range(r, 0, Math.PI * 2);
       if (Math.abs(Math.atan2(Math.sin(a - Math.PI / 2), Math.cos(a - Math.PI / 2))) < 0.5) continue;   // keep the door clear
       const d = range(r, R - 2.5, R + 1), x = Math.cos(a) * d, z = Math.sin(a) * d, sc = range(r, 1.2, 2.6);
-      const g = new THREE.IcosahedronGeometry(sc, 1);
+      const g = mergeVertices(new THREE.IcosahedronGeometry(sc, 3)); g.deleteAttribute('uv'); g.deleteAttribute('normal'); const bp = g.attributes.position;
+      for (let k = 0; k < bp.count; k++) { const x0 = bp.getX(k), y0 = bp.getY(k), z0 = bp.getZ(k), q = 1 + 0.16 * Math.sin(x0 * 2.3 + z0 * 1.7 + i) * Math.cos(y0 * 2.9 - x0 * 1.1) + 0.07 * Math.sin(x0 * 7 + y0 * 6 + z0 * 5); bp.setXYZ(k, x0 * q, y0 * q, z0 * q); }
+      g.computeVertexNormals();
       const m = new THREE.Mesh(g, rock); m.position.set(x, this.height(x, z) - 0.3, z); m.rotation.set(r() * 3, r() * 3, 0); m.scale.y = 0.7;
       s.add(m);
     }
@@ -146,16 +167,18 @@ export class Garden extends Room {
   _buildPlants() {
     const r = this.rng, s = this.scene;
     this.plants = [];
-    const stalkMat = new THREE.MeshStandardMaterial({ color: 0x5a1a10, roughness: 0.8, emissive: 0x200604, emissiveIntensity: 1 });
+    const stalkMat = new THREE.MeshStandardMaterial({ color: 0x6a2418, roughness: 0.7, emissive: 0x2a0806, emissiveIntensity: 1, bumpMap: noiseTex(), bumpScale: 1.2 });
+    stalkMat.map = null;
     const gtex = radialTex();
     const make = (x, z, scale, heart = false) => {
       const gy = this.height(x, z), h = heart ? 2.2 : range(r, 1.1, 2.3) * scale;
       const lean = new THREE.Vector3(range(r, -0.3, 0.3), 0, range(r, -0.3, 0.3));
       const curve = new THREE.CatmullRomCurve3([new THREE.Vector3(0, -0.2, 0), new THREE.Vector3(lean.x * 0.3, h * 0.5, lean.z * 0.3), new THREE.Vector3(lean.x, h, lean.z)]);
-      const stalk = new THREE.Mesh(new THREE.TubeGeometry(curve, 8, heart ? 0.12 : 0.05, 5), stalkMat);
+      const stalk = new THREE.Mesh(new THREE.TubeGeometry(curve, 12, heart ? 0.12 : 0.05, 7), stalkMat);
       stalk.position.set(x, gy, z); s.add(stalk);
-      const u = { ...clothUniforms, uBloom: { value: 0 }, uGlow: { value: 0 }, uSeed: { value: r() * 20 }, uLen: { value: (heart ? 1.9 : range(r, 1.0, 1.45)) * scale }, uWid: { value: (heart ? 0.55 : 0.34) * scale } };
-      const mat = new THREE.ShaderMaterial({ uniforms: u, vertexShader: petalVert, fragmentShader: clothFrag, side: THREE.DoubleSide });
+      const mat = fabricMat(petalVert, { uBloom: { value: 0 }, uGlow: { value: 0 }, uSeed: { value: r() * 20 }, uLen: { value: (heart ? 1.9 : range(r, 1.0, 1.45)) * scale }, uWid: { value: (heart ? 0.55 : 0.34) * scale }, uBaseAO: { value: 0.65 } },
+        { maxU: 1, weave: [110, 60], hem: [0.04, 0.045], glowK: 0.5, trans: 1.5, sheen: 0.8, glow: heart ? [3.4, 2.4, 1.3] : [2.6, 2.1, 1.7], colA: [0.36, 0.025, 0.03], colB: [0.9, 0.16, 0.07] });
+      const u = mat.uniforms;
       const bud = new THREE.Mesh(petalGeometry(heart ? 9 : 5 + ((r() * 3) | 0)), mat);
       bud.position.set(x + lean.x, gy + h, z + lean.z); bud.rotation.y = r() * 6;
       bud.frustumCulled = false;

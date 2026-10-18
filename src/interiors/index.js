@@ -74,6 +74,7 @@ export class Interiors {
       const fx = d.fx, k = (d.done ? 0.55 : 1) * (0.85 + 0.15 * Math.sin(time * 1.3 + d.index)) * (1 + 0.35 * d.near);
       fx.fill.material.color.copy(d.light).multiplyScalar(1.5 * k);
       fx.spill.material.color.copy(d.light).multiplyScalar(0.5 * k);
+      if (fx.shaft) { fx.shaft.visible = dist < 140; fx.shaft.material.uniforms.uTime.value = time; fx.shaft.material.uniforms.uIntensity.value = (d.done ? 0.35 : 0.6) * (0.9 + 0.1 * Math.sin(time * 1.3 + d.index)); }
       fx.halo.material.opacity = clamp(0.25 + 0.75 * smooth(500, 60, dist), 0, 1) * (d.done ? 0.5 : 0.9) * (0.9 + 0.1 * Math.sin(time * 1.3));
       // motes drifting out of the doorway
       if (dist < 40 && Math.random() < dt * 5) {
@@ -150,6 +151,7 @@ export class Interiors {
     const d = this.door, P = this.player, cam = this.cam;
     if (!d.room) {
       d.room = new BUILD[d.kind](d);
+      try { d.room.prepare(this.renderer); } catch (e) { console.warn('room env', e); }
       try { this.renderer.compile(d.room.scene, this.camera); } catch (e) { /* compiled on first draw instead */ }
     }
     const room = this.room = d.room;

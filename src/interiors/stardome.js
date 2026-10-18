@@ -7,6 +7,7 @@ import { makeGlyphSprite, makeRingTexture } from '../textures.js';
 import { Updrafts } from '../world/updrafts.js';
 import { smooth, clamp } from '../world/heightfield.js';
 import { range } from '../world/seed.js';
+import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 const RD = 22, SKY_R = 260;
 
@@ -18,30 +19,70 @@ precision highp float;
 uniform float uTime, uRot;
 varying vec3 vDir;
 float h3(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
-float stars(vec3 d, float scale, float thresh) {
+float vn3(vec3 p) {
+  vec3 i = floor(p), f = fract(p); f = f * f * (3. - 2. * f);
+  return mix(mix(mix(h3(i), h3(i + vec3(1, 0, 0)), f.x), mix(h3(i + vec3(0, 1, 0)), h3(i + vec3(1, 1, 0)), f.x), f.y),
+             mix(mix(h3(i + vec3(0, 0, 1)), h3(i + vec3(1, 0, 1)), f.x), mix(h3(i + vec3(0, 1, 1)), h3(i + vec3(1, 1, 1)), f.x), f.y), f.z);
+}
+float fbm3(vec3 p) { return vn3(p) * 0.65 + vn3(p * 2.3 + 3.7) * 0.35; }
+// one layer of stars: a jittered grid on the sphere; brightness follows a steep power law, colour a stellar temperature ramp
+vec3 stars(vec3 d, float scale, float thresh, float size, float gain, float bandK) {
   vec3 p = d * scale; vec3 i = floor(p), f = fract(p);
   float r = h3(i);
-  if (r < thresh) return 0.;
+  float th = thresh - bandK;
+  if (r < th) return vec3(0.);
   vec3 c = vec3(h3(i + 1.3), h3(i + 2.7), h3(i + 4.1)) * 0.7 + 0.15;
   float dd = length(f - c);
-  float tw = 0.65 + 0.35 * sin(uTime * (1. + 3. * h3(i + 7.)) + r * 40.);
-  return smoothstep(0.09, 0.0, dd) * tw * (r - thresh) / (1. - thresh);
+  float m = (r - th) / (1. - th);
+  float tw = 0.6 + 0.4 * sin(uTime * (1.2 + 4. * h3(i + 7.)) + r * 40.) * sin(uTime * (0.7 + 2. * h3(i + 9.)) + r * 17.);
+  float core = smoothstep(size, 0., dd) * tw * (0.25 + pow(m, 3.) * 3.2) * gain;
+  float halo = smoothstep(size * 3.2, 0., dd) * pow(m, 5.) * 0.55 * gain;
+  float t = h3(i + 11.);
+  vec3 col = mix(vec3(0.62, 0.75, 1.15), vec3(1.15, 1.0, 0.85), smoothstep(0.2, 0.7, t));
+  col = mix(col, vec3(1.25, 0.72, 0.5), smoothstep(0.82, 1., t));
+  return col * (core + halo);
 }
 void main() {
   vec3 d = normalize(vDir);
   float c = cos(uRot), s = sin(uRot);
   d = vec3(d.x * c - d.z * s, d.y, d.x * s + d.z * c);
   float h = d.y;
-  vec3 col = mix(vec3(0.006, 0.01, 0.03), vec3(0.0008, 0.0012, 0.005), smoothstep(-0.1, 0.8, h));
-  // the river of stars
-  vec3 band = normalize(vec3(0.5, 0.3, 0.8));
-  float b = exp(-pow(dot(d, band) * 3.2, 2.));
-  float n = h3(floor(d * 60.)) * 0.5 + h3(floor(d * 23.)) * 0.5;
-  col += vec3(0.022, 0.016, 0.04) * b * (0.6 + 0.4 * n) + vec3(0.016, 0.006, 0.02) * exp(-pow(dot(d, normalize(vec3(-0.6, 0.4, 0.2))) * 2.5, 2.)) * 0.8;
-  float st = stars(d, 90., 0.86) * 1.6 + stars(d, 180., 0.9) * 1.1 + stars(d, 40., 0.93) * 3.0 + stars(d, 300., 0.94) * b * 1.5;
-  col += vec3(0.9, 0.95, 1.1) * st * smoothstep(-0.25, 0.05, h);
+  vec3 col = mix(vec3(0.007, 0.011, 0.032), vec3(0.0008, 0.0012, 0.006), smoothstep(-0.1, 0.8, h));
+  col += vec3(0.012, 0.01, 0.03) * exp(-abs(h) * 5.);                       // airglow at the horizon
+  // the river of stars: a lit band with drifting dust lanes and a warm bulge
+  vec3 band = normalize(vec3(0.5, 0.3, 0.8)), core = normalize(vec3(-0.3, 0.35, 0.89));
+  float bd = dot(d, band);
+  float b = exp(-pow(bd * 3.4, 2.));
+  float lane = 0.;
+  if (b > 0.012) {
+    float cloud = fbm3(d * 5.), cloud2 = vn3(d * 12. + 4.);
+    lane = smoothstep(0.42, 0.62, vn3(d * 7.5 + 11.) * 0.7 + vn3(d * 15. + 3.) * 0.3) * exp(-pow(bd * 6., 2.));
+    float bulge = exp(-pow(acos(clamp(dot(d, core), -1., 1.)) * 1.9, 2.));
+    vec3 mw = mix(vec3(0.05, 0.06, 0.14), vec3(0.16, 0.12, 0.13), bulge) * (0.45 + 0.9 * cloud);
+    mw += vec3(0.11, 0.075, 0.05) * bulge * cloud2;
+    col += mw * b * (1. - 0.8 * lane) * 0.95;
+  }
+  col += vec3(0.02, 0.008, 0.026) * exp(-pow(dot(d, normalize(vec3(-0.6, 0.4, 0.2))) * 2.5, 2.)) * 0.8;   // a faint nebula
+  float bandK = b * 0.17 * (1. - lane);
+  col += vec3(0.8, 0.85, 1.1) * step(0.95, h3(floor(d * 380.))) * (0.3 + 0.7 * h3(floor(d * 380.) + 5.)) * b * (1. - lane) * 0.22;   // the unresolved crowd of stars in the band
+  vec3 st = vec3(0.);
+  if (h > -0.3) st = stars(d, 70., 0.87, 0.06, 1.0, bandK) + stars(d, 140., 0.86, 0.07, 0.9, bandK) + stars(d, 36., 0.94, 0.09, 1.6, bandK * 0.5)
+          + stars(d, 220., 0.88, 0.1, 0.9, bandK * 1.5) + stars(d, 300., 0.9, 0.11, 0.8, bandK * 1.5);
+  col += st * smoothstep(-0.25, 0.05, h);
   gl_FragColor = vec4(col, 1.0);
 }`;
+
+/** A drifting stone shard: a faceted lump with one long axis. */
+function shardGeo(sc, r) {
+  const g = mergeVertices(new THREE.IcosahedronGeometry(sc, 2)); g.deleteAttribute('uv'); g.deleteAttribute('normal');
+  const p = g.attributes.position, ph = r() * 9;
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i), y = p.getY(i), z = p.getZ(i), q = 1 + 0.22 * Math.sin(x * 2.1 + ph) * Math.cos(z * 2.6 - y) + 0.1 * Math.sin(x * 6 + y * 5 + z * 4 + ph);
+    p.setXYZ(i, x * q * 0.8, y * q * 1.35, z * q * 0.8);
+  }
+  g.computeVertexNormals();
+  return g;
+}
 
 export class StarDome extends Room {
   constructor(door) {
@@ -51,7 +92,7 @@ export class StarDome extends Room {
       sunDir: V(-0.3, 0.8, -0.45), sunC: C('#bccbff'), sunI: 1.3, amb: C('#3c4c80'), grd: C('#14142a'),
       floorSun: V(-0.55, 0.32, -0.6), floorSunK: 0.55,
       fog: C('#0b1230'), fogD: 0.006, bg: C('#02030a'), exp: 0.95, bloom: 0.6, bloomThreshold: 1.1, rays: 0,
-      lit: C('#2c386a'), hi: C('#7482c0'), shade: C('#05071a'), rim: C('#5a68b0'), glit: C('#ffffff'), glitter: 0.9,
+      lit: C('#34448a'), hi: C('#a4b4f4'), shade: C('#05071a'), rim: C('#5a68b0'), glit: C('#ffffff'), glitter: 2.0,
       sat: 1.08, contrast: 1.05, vignette: 0.45, vigColor: C('#02040e'), shadowTint: C('#00020c'), highTint: C('#000000'), mood: 8, sand: C('#6a78b0'), indoor: 0.4,
     });
     this.bounds = { circle: RD - 0.6 };
@@ -87,7 +128,7 @@ export class StarDome extends Room {
     const s = this.scene, r = this.rng;
     this.addSand(sandFloor((x, z) => this.height(x, z), -RD - 4, RD + 4, -RD - 4, RD + 4, 0.5, (x, z) => Math.hypot(x, z) < RD + 3.5));
     // the underside: the disc is a floating island of sand and stone
-    const under = new THREE.Mesh(new THREE.ConeGeometry(RD + 3.4, 26, 40, 4, true), stoneMat(0x2a2e50, 0x0a0c20, 1, 3));
+    const under = new THREE.Mesh(new THREE.ConeGeometry(RD + 3.4, 26, 40, 4, true), stoneMat(0x3a3e68, 0x10143a, 1, 3, { tile: 0.1, strata: 0.5, ao: 0.5, aoH: 6, floorY: -14, bounce: C('#5a78d0').multiplyScalar(0.12), cracks: 0.9, bump: 0.07 }));
     const p = under.geometry.attributes.position;
     for (let i = 0; i < p.count; i++) { const k = 1 + 0.08 * Math.sin(p.getY(i) * 0.9 + Math.atan2(p.getX(i), p.getZ(i)) * 5); p.setX(i, p.getX(i) * k); p.setZ(i, p.getZ(i) * k); }
     under.geometry.computeVertexNormals();
@@ -95,15 +136,15 @@ export class StarDome extends Room {
     s.add(under);
     // shards of stone drifting around the island
     this.shards = [];
-    const rock = stoneMat(0x3a3e66, 0x0c0e24, 1, 3);
+    const rock = stoneMat(0x4a4e78, 0x14183e, 1, 3, { tile: 0.3, strata: 0.9, ao: 0.75, aoH: 2, floorY: -20, bounce: C('#5a78d0').multiplyScalar(0.12), cracks: 0.8, bump: 0.08 });
     for (let i = 0; i < 14; i++) {
       const a = r() * Math.PI * 2, d = range(r, RD + 8, RD + 40), y = range(r, -12, 18), sc = range(r, 0.8, 3.5);
-      const m = new THREE.Mesh(new THREE.IcosahedronGeometry(sc, 0), rock);
+      const m = new THREE.Mesh(shardGeo(sc, r), rock);
       m.position.set(Math.cos(a) * d, y, Math.sin(a) * d); m.rotation.set(r() * 3, r() * 3, r() * 3);
       s.add(m); this.shards.push({ m, a, d, y, sp: range(r, 0.01, 0.03) * (r() < 0.5 ? -1 : 1), ph: r() * 6 });
     }
     // the doorway home: a free-standing stone frame filled with daylight
-    const frame = stoneMat(0x8a7c90, 0x1a1428, 0.8, 2.2);
+    const frame = stoneMat(0x9a8ca0, 0x241a34, 0.7, 2.2, { tile: 0.3, strata: 0.6, ao: 0.6, aoH: 2, floorY: this.height(0, dz) - 0.2, block: [1.1, 0.8], bounce: C('#ffcf90').multiplyScalar(0.18) });
     const y0 = this.height(0, dz);
     this.exitDoor(0, dz, { w: 2.2, h: 3.8, depth: 0.6, color: C('#ffe0b4'), frameMat: frame, y: y0 - 0.1 });
     this.box(3.4, 4.6, 0.5, frame, 0, y0 - 0.4, dz + 1.15, 0, false);
