@@ -6,7 +6,8 @@ import { rngFor, range, sign, shuffle } from '../world/seed.js';
 import { PLAN, CORRIDOR, addSite, occupy, isFree, onPath } from '../world/layout.js';
 import { terrainHeight, addPlaza, pathX, progressAt } from '../world/heightfield.js';
 import { defaultUpdraftPositions } from '../world/updrafts.js';
-import { radialTex, doorLightTex } from './common.js';
+import { radialTex, doorLightTex, lightShaft } from './common.js';
+import { makeGlyphSprite } from '../textures.js';
 
 export const ROOM_KINDS = ['sandhall', 'garden', 'tower', 'stardome', 'memory'];
 // which mini worlds each chapter's building may open onto
@@ -244,5 +245,12 @@ function buildExterior(ruins, door, rr) {
   const [hx, hz] = W(0, oz + hd + 0.4);
   halo.position.set(hx, y0 + dh * 0.55, hz); halo.scale.set(dw * 6, dh * 2.2, 1);
   ruins.group.add(halo);
-  door.fx = { fill, spill, halo, base: col.clone() };
+  // ----- detail: a worn sill, a glyph inlaid in gold over the lintel, and a shaft of the inner light leaning out into the dust
+  place(boxGeo(dw * 2 + 0.7, 0.16, 1.3), dark, 0, -0.06, oz + hd + 0.65, 0, false);
+  const inlay = new THREE.MeshStandardMaterial({ color: 0xe8b860, roughness: 0.4, metalness: 0.35, emissive: 0x7a4410, emissiveIntensity: 0.7, map: makeGlyphSprite(door.index * 2 + 1), alphaTest: 0.55, side: THREE.DoubleSide });
+  const gl = place(new THREE.PlaneGeometry(0.9, 0.9), inlay, 0, dh + 0.62, oz + hd + 0.32, 0, false); gl.castShadow = false;
+  const [tx, tz] = W(0, oz + hd - rd * 0.45), [bx, bz] = W(0, oz + hd + 4.2);
+  const shaft = lightShaft(new THREE.Vector3(tx, y0 + dh - 0.3, tz), new THREE.Vector3(bx, y0 + 0.05, bz), dw * 0.8, dw * 2.3, col.clone().multiplyScalar(0.5), 0.55, { topFade: 0.25, bottomFade: 0.5, haze: false });
+  ruins.group.add(shaft);
+  door.fx = { fill, spill, halo, shaft, base: col.clone() };
 }
