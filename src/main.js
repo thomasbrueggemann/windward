@@ -711,7 +711,13 @@ function frame(nowMs, doRender = true) {
     slides.update(dt, { player, group, camera, time, playing: game.state === 'playing', env });
     for (const h of slides.hints) showHint(...h);
     slides.hints.length = 0;
-    for (const e of slides.events) { if (e.type === 'kick') audio.slideKick && audio.slideKick(); }
+    cam.shake = Math.max(cam.shake, slides.shake || 0);
+    for (const e of slides.events) {
+      if (e.type === 'kick') audio.slideKick && audio.slideKick();
+      else if (e.type === 'worm-rumble') audio.wormRumble && audio.wormRumble();
+      else if (e.type === 'worm-erupt') { if (e.near < 90 && audio.wormRoar) audio.wormRoar(); cam.shake = Math.max(cam.shake, 0.3 * (1 - clamp(e.near / 90, 0, 1))); }
+      else if (e.type === 'bump' && e.mine) { audio.thud && audio.thud(e.kind === 'worm'); cam.shake = Math.max(cam.shake, e.kind === 'worm' ? 0.45 : 0.25); }
+    }
     slides.events.length = 0;
     if (group.near > 0 && group.snow > 0.3) showHint('huddle', 'Stay close: huddled together, the wind and cold bite less. Hold a long note — sung together, it parts the storm.', 9000);
     // the thaw: the group's song clears the blizzard around them for a while

@@ -6,6 +6,7 @@ import { SLIDES, slideAt, terrainHeight, smooth, clamp } from './heightfield.js'
 import { coursePoint, tab } from './slidecourse.js';
 import { shaft } from './stone.js';
 import { makeSoftDot } from '../textures.js';
+import { SlideHazards } from './slidehazards.js';
 
 /**
  * The long sand slides (course geometry: slidecourse.js, ground: heightfield.js). Per world two of them:
@@ -111,7 +112,7 @@ class Trail {
   }
 }
 
-const _q = {}, _c = {}, _c2 = {};
+const _q = {}, _c = {}, _c2 = {}, _sandC = new THREE.Color(1, 0.7, 0.4);
 const exp = (k, dt) => 1 - Math.exp(-k * dt);
 
 export class Slides {
@@ -138,6 +139,7 @@ export class Slides {
       if (d.kind === 'gold') this._buildGold(d); else this._buildDune(d);
       this._buildCloth(d);
     }
+    this.hazards = new SlideHazards(scene, { ruins, fx, slides: SLIDES });
   }
 
   // ---------------------------------------------------------------- building
@@ -329,6 +331,15 @@ export class Slides {
       }
     }
 
+    // ---- what's in the way
+    const hz = this.hazards, sandC = ctx.env && ctx.env.pal ? ctx.env.pal.lit : _sandC;
+    const bodies = [player, ...(group ? group.members.filter((c) => c.visible && c.state === 'travel').map((c) => c.p) : [])];
+    hz.update(dt, { player, bodies, q, time, sand: sandC });
+    for (const e of hz.events) this.events.push(e);
+    for (const h of hz.hints) this.hints.push(h);
+    hz.events.length = 0; hz.hints.length = 0;
+    this.shake = hz.shake;
+
     // ---- what you see
     this._fx(dt, ctx, q, riding);
     for (const sm of this.shaftMats) {
@@ -340,8 +351,8 @@ export class Slides {
     for (const L of this.lips) L.glow.material.opacity = 0.35 + 0.15 * Math.sin(time * 1.3);
     // trails
     if (ctx.env && ctx.env.pal) { this.trailU.uSand.value.copy(ctx.env.pal.shade).lerp(ctx.env.pal.lit, 0.45); this.trailU.uGlint.value.copy(ctx.env.pal.glit).multiplyScalar(0.35); }
-    const bodies = [player, ...(group ? group.members.filter((c) => c.visible).map((c) => c.p) : [])];
-    for (const b of bodies) {
+    const trailBodies = [player, ...(group ? group.members.filter((c) => c.visible).map((c) => c.p) : [])];
+    for (const b of trailBodies) {
       let t = this.trails.get(b);
       const on = b.slide > 0.3;
       if (!t) { if (!on) continue; t = new Trail(this.scene, this.trailU); this.trails.set(b, t); }
@@ -418,7 +429,8 @@ export class Slides {
   auto(player) {
     const q = slideAt(player.pos.x, player.pos.z, _q);
     if (!q || q.s < -40 || q.s > q.slide.Ls - 30 || Math.abs(q.d) > q.W + 25) return null;   // near the end the route ahead takes over
-    const P = coursePoint(q.slide, Math.max(0, q.s) + 18, 0, _c2);
+    const av = this.hazards.avoid(q);
+    const P = coursePoint(q.slide, Math.max(0, q.s) + 18, av ?? 0, _c2);
     return { tx: P.x, tz: P.z, amt: 1 };
   }
 }

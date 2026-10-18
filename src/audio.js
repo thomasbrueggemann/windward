@@ -356,6 +356,32 @@ export class AudioEngine {
     const g = ctx.createGain(); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.16 * Math.min(1.3, strength), t + 0.12); g.gain.exponentialRampToValueAtTime(0.0001, t + 1.3);
     s.connect(f); f.connect(g); g.connect(this.sfxBus); s.start(t); s.stop(t + 1.4);
   }
+  /** A rider thrown off the line by a rock (or, deeper and longer, a worm). */
+  thud(big = false) {
+    if (!this.ready) return; const ctx = this.ctx, t = ctx.currentTime;
+    this._noiseBurst(t, big ? 0.6 : 0.35, big ? 260 : 380, 0.8, big ? 0.2 : 0.14, 'lowpass');
+    const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.setValueAtTime(big ? 95 : 130, t); o.frequency.exponentialRampToValueAtTime(40, t + 0.3);
+    const g = ctx.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(big ? 0.28 : 0.18, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.4);
+    o.connect(g); g.connect(this.sfxBus); o.start(t); o.stop(t + 0.45);
+  }
+  /** The sand heaving before a sandworm comes up: a low swelling rumble. */
+  wormRumble() {
+    if (!this.ready) return; const ctx = this.ctx, t = ctx.currentTime;
+    const s = this._noiseSrc(false); const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.setValueAtTime(90, t); f.frequency.linearRampToValueAtTime(260, t + 1.0);
+    const g = ctx.createGain(); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.4, t + 0.9); g.gain.exponentialRampToValueAtTime(0.0001, t + 1.5);
+    s.connect(f); f.connect(g); g.connect(this.sfxBus); s.start(t); s.stop(t + 1.6);
+  }
+  /** The worm breaks the surface: a ragged, falling roar over a burst of sand. */
+  wormRoar() {
+    if (!this.ready) return; const ctx = this.ctx, t = ctx.currentTime;
+    for (const f0 of [96, 101]) {
+      const o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(f0 * 0.5, t + 1.3);
+      const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.setValueAtTime(900, t); lp.frequency.exponentialRampToValueAtTime(220, t + 1.3);
+      const g = ctx.createGain(); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.13, t + 0.08); g.gain.exponentialRampToValueAtTime(0.0001, t + 1.4);
+      o.connect(lp); lp.connect(g); g.connect(this.sfxBus); o.start(t); o.stop(t + 1.5);
+    }
+    this._noiseBurst(t, 1.0, 700, 0.6, 0.12);
+  }
   /** An aerial maneuver: a quick banded whoosh with a small bell on top. */
   maneuver(kind) {
     if (!this.ready) return; const ctx = this.ctx, t = ctx.currentTime;
