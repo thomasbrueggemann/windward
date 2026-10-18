@@ -71,11 +71,14 @@ class Worm {
   /** Shape the spine for the current extension and write the rings. */
   pose(time) {
     const e = this.ext;
-    const Hy = -1.3 + 7.4 * e, ah = -4.2 * e + Math.sin(time * 0.7 + this.ph) * 1.0 * e, sw = Math.sin(time * 0.45 + this.ph) * 2.2 * e;
-    const p1y = -4.5 + (Hy + 4.5) * 0.6, p2a = ah + 3.0 * e, p2y = Hy + 2.6 * e;
+    // a low, long body: the tail stays under the sand behind it, the back humps out of it and the head skims along just
+    // above the surface, facing the rider with its maw wide open
+    const sway = Math.sin(time * 0.45 + this.ph) * 1.6 * e;
+    const p1a = 5, p1y = -4 + 5.5 * e, p2a = 1.5 * e, p2y = -1.5 + 2.3 * e, ha = -3.5 * e + Math.sin(time * 0.7 + this.ph) * 0.4 * e, hy = -1.5 + 2.5 * e;
     const at = (u, out) => {
       const w = 1 - u, b0 = w * w * w, b1 = 3 * w * w * u, b2 = 3 * w * u * u, b3 = u * u * u;
-      const S = WORM_SCALE, a = (b2 * p2a + b3 * ah) * S, y = (b0 * -4.5 + b1 * p1y + b2 * p2y + b3 * Hy) * S, l = sw * u * u * S;
+      const S = WORM_SCALE, a = (b0 * 8 + b1 * p1a + b2 * p2a + b3 * ha) * S;
+      const y = (b0 * -4 + b1 * p1y + b2 * p2y + b3 * hy + 0.3 * e * Math.sin(u * 11 - time * 1.0) * smooth(0.1, 0.5, u)) * S, l = sway * u * u * S;
       return out.set(this.x + this.tx * a + this.nx * l, this.y + y, this.z + this.tz * a + this.nz * l);
     };
     const P = this.pts, R = this.rad, pos = this.pos, nrm = this.nrm;
@@ -106,7 +109,7 @@ class Worm {
     const k = NB - 1, tx = P[k * 3] - P[(k - 1) * 3], ty = P[k * 3 + 1] - P[(k - 1) * 3 + 1], tz = P[k * 3 + 2] - P[(k - 1) * 3 + 2];
     const tl = Math.hypot(tx, ty, tz) || 1, ux = tx / tl, uy = ty / tl, uz = tz / tl;
     const cx = P[k * 3], cy = P[k * 3 + 1], cz = P[k * 3 + 2];
-    [[0.4, 1.85, 0.5], [0.65, 1.3, 0], [1.3, 0.8, 0], [2.0, 0.4, 0], [2.6, 0.03, 0]].forEach(([d, r, tooth], q) => ring(NB + q, cx + ux * d * WORM_SCALE, cy + uy * d * WORM_SCALE, cz + uz * d * WORM_SCALE, tx, ty, tz, r * WORM_SCALE, tooth * WORM_SCALE));
+    [[0.4, 1.8, 0.8], [0.7, 1.45, 0], [1.5, 1.0, 0], [2.4, 0.5, 0], [3.1, 0.03, 0]].forEach(([d, r, tooth], q) => ring(NB + q, cx + ux * d * WORM_SCALE, cy + uy * d * WORM_SCALE, cz + uz * d * WORM_SCALE, tx, ty, tz, r * WORM_SCALE, tooth * WORM_SCALE));
     this.geo.attributes.position.needsUpdate = true; this.geo.attributes.normal.needsUpdate = true;
   }
 
@@ -275,7 +278,7 @@ export class SlideHazards {
       if (b.slide < 0.3 || b.scripted) continue;
       const p = b.pos;
       for (const w of this.worms) {
-        if (!w.active || w.ext < 0.3 || Math.abs(p.x - w.x) > 14 || Math.abs(p.z - w.z) > 14) continue;
+        if (!w.active || w.ext < 0.45 || Math.abs(p.x - w.x) > 14 || Math.abs(p.z - w.z) > 14) continue;
         if ((w.lastHit.get(b) || -9) > time - 1.8) continue;
         const h = w.hit(p.x, p.y + 0.9, p.z);
         if (!h) continue;
