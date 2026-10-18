@@ -57,6 +57,16 @@ export class Companion {
     this.slot = new THREE.Vector3();
     this.steer = new THREE.Vector3();   // separation + alignment from the group (xz)
     this.chorus = 0;              // 0..1 how much it is singing along right now (for the warmth visuals)
+    // its own timing, so the group never moves as one: how late it reacts to the player, how loosely it holds its
+    // place, how willing it is to take off, and a fixed offset from the even formation
+    const rr = Math.random;
+    this.react = 0.25 + rr() * 0.9;
+    this.slotK = 0.6 + rr() * 1.2;
+    this.flyChance = 0.5 + rr() * 0.45;
+    this.angJ = (rr() - 0.5) * 0.45; this.leadJ = (rr() - 0.5) * 3; this.latJ = (rr() - 0.5) * 2.5;
+    this.wf1 = 0.07 + rr() * 0.09; this.wf2 = 0.05 + rr() * 0.07; this.ph = rr() * 10;
+    this.slotS = new THREE.Vector3(); this.slotInit = false;
+    this.flyDelay = -1; this.pFlying = false; this.pGlideT = 0;
   }
 
   get pos() { return this.p.pos; }
@@ -118,7 +128,8 @@ export class Companion {
     const sitting = st === 'waiting' || st === 'resting';
     inp.dive = false; inp.glidePressed = false;
     // mirror the player's flight: spread the robe while they glide or soar
-    inp.glide = !c.grounded && (player.mode === 'glide' || player.mode === 'soar');
+    this.pGlideT = (player.mode === 'glide' || player.mode === 'soar') ? this.pGlideT + dt : 0;
+    inp.glide = !c.grounded && (this.pGlideT > this.react || (c.charge < 0.05 && c.vel.y < 0));
 
     // ----- hearing the player sing
     const hearR = sitting ? 60 : 45;
@@ -156,7 +167,11 @@ export class Companion {
     } else if (st === 'travel') {
       this.sit += (0 - this.sit) * exp(3, dt);
       // ...curiosity: drift over to a glyph or shrine for a few seconds
-      let tx = this.slot.x, tz = this.slot.z;
+      // its place in the formation is followed loosely and late, so turns ripple through the group
+      const ss = this.slotS;
+      if (!this.slotInit || ss.distanceToSquared(this.slot) > 400) { ss.copy(this.slot); this.slotInit = true; }
+      ss.x += (this.slot.x - ss.x) * exp(this.slotK, dt); ss.z += (this.slot.z - ss.z) * exp(this.slotK, dt);
+      let tx = ss.x, tz = ss.z;
       if (this.curiousT > 0) {
         this.curiousT -= dt;
         tx = this.curious.x; tz = this.curious.z;
@@ -184,7 +199,11 @@ export class Companion {
       inp.mx = wx; inp.my = -wz;                 // camYaw = 0 => forward is -z
       amt = Math.min(1, wl);
       // follow the player into the air while they fly (and the scarf allows)
-      if (player.flying && d < 40 && c.charge > 0.05) this.flyHold = 0.4;
+      // (not all at once: each decides for itself, a moment later, and some stay on the ground)
+      if (player.flying && !this.pFlying) this.flyDelay = (d > 18 || Math.random() < this.flyChance) ? this.react + Math.random() * 0.5 : -1;
+      this.pFlying = player.flying;
+      if (this.flyDelay >= 0 && (this.flyDelay -= dt) < 0) this.flyHold = 0.5 + Math.random() * 0.6;
+      if (player.flying && this.flyHold > 0 && d < 40 && c.charge > 0.05 && Math.random() > dt * 0.6) this.flyHold = Math.max(this.flyHold, 0.3);
       // fly to catch up when far behind and the scarf is full
       if (d > 30 && c.charge > 0.6 && c.grounded && Math.random() < dt * 0.5) this.flyHold = 0.9;
       if (this.flyHold > 0) {
@@ -244,9 +263,12 @@ export class Companion {
   }
 
   /** Ending: settle a scripted pose (lying/kneeling in the snow) on the ground. */
-  groundPose(dt, time, env, collapse, sing = false) {
+  groundPose(dt, time, env, collapse, sing = false, t = 99) {
     const c = this.p;
-    c.collapse = collapse;
+    // each traveler sinks and rises at its own pace, a little after or before the player
+    const c0 = this.colDelay * 0.2, c1 = Math.min(1, c0 + 0.25 + 0.35 / this.colK);
+    const k = clamp((collapse - c0) / (c1 - c0), 0, 1);
+    c.collapse = k * k * (3 - 2 * k);
     c.update(dt, sing ? { ...NO_INPUT, sing: true } : NO_INPUT, 0, time, env);
     c.pos.y = terrainHeight(c.pos.x, c.pos.z);
     c.group.position.y = c.pos.y;

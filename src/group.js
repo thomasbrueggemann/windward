@@ -249,15 +249,16 @@ export class Group {
     const gvl = Math.hypot(gv.x, gv.z);
     for (let k = 0; k < N; k++) {
       const c = trav[k], pr = c.pers;
-      const wob = Math.sin(time * 0.11 + c.index * 2.1) * pr.wander, wob2 = Math.sin(time * 0.07 + c.index * 4.3);
-      let lead = (idle ? (this.idleT > 2 ? 3.0 : 4.2) : 5.5 + Math.min(5, player.speed * 0.5)) + pr.pace * (idle ? 0.3 : 1) + wob * 3;
+      const wob = Math.sin(time * c.wf1 + c.ph) * pr.wander, wob2 = Math.sin(time * c.wf2 + c.ph * 1.7) + 0.4 * Math.sin(time * c.wf1 * 2.3 + c.ph);
+      let lead = (idle ? (this.idleT > 2 ? 3.0 : 4.2) : 5.5 + Math.min(5, player.speed * 0.5)) + pr.pace * (idle ? 0.3 : 1) + wob * 3 + c.leadJ * (1 - 0.6 * hud);
       const spread = 0.95 * (1 - 0.8 * narrow);
       let ang = N === 1 ? 0.5 * c.side : spread * (2 * k / (N - 1) - 1);
+      ang += c.angJ * (1 - narrow);
       lead += narrow * k * 2.6;                                  // narrow passages: fall into a file
       // the storm: a tight huddle around the player
       lead += (2.0 + 0.5 * (k % 2) - lead) * hud;
       ang += ((N === 1 ? 1.1 * c.side : 1.35 * (2 * k / Math.max(1, N - 1) - 1)) - ang) * hud;
-      const lat = wob2 * pr.wander * 3 * (1 - hud) * (1 - narrow);
+      const lat = (wob2 * pr.wander * 3 + c.latJ) * (1 - hud) * (1 - narrow);
       const cs = Math.cos(ang), sn = Math.sin(ang);
       const dx = gx * cs - gz * sn, dz = gx * sn + gz * cs;
       c.slot.set(pp.x + dx * lead - dz * lat, 0, pp.z + dz * lead + dx * lat);
@@ -369,12 +370,19 @@ export class Group {
     const met = this.members.filter((c) => c.met);
     this.ending = { huddled: 0, rejoined: 0, flying: false };
     met.forEach((c, k) => {
-      const a = met.length === 1 ? 0.9 : -1.5 + 3 * k / (met.length - 1);
-      const cs = Math.cos(a), sn = Math.sin(a);
-      const dx = fx * cs - fz * sn, dz = fx * sn + fz * cs;
-      c.endSpot = new THREE.Vector3(player.pos.x + dx * 2.0, 0, player.pos.z + dz * 2.0);
+      // a loose scatter around the player, not a row
+      let dx = 0, dz = 0;
+      for (let tries = 0; tries < 24; tries++) {
+        const a = (met.length === 1 ? 0.9 : -2.2 + 4.4 * (k + 0.2 + Math.random() * 0.6) / met.length) + (Math.random() - 0.5) * 0.3;
+        const cs = Math.cos(a), sn = Math.sin(a), rad = 2 + Math.random() * 2.6;
+        dx = fx * cs - fz * sn; dz = fx * sn + fz * cs;
+        c.endSpot = new THREE.Vector3(player.pos.x + dx * rad, 0, player.pos.z + dz * rad);
+        // lying bodies need room: keep clear of the others already placed
+        if (met.slice(0, k).every((o) => o.endSpot.distanceTo(c.endSpot) > 2.3)) break;
+      }
+      c.endCol = 0; c.colDelay = Math.random() * 2.2; c.colK = 0.5 + Math.random() * 1.1;
       c.endMode = c.state === 'travel' && c.dist < 45 ? 'huddle' : 'rejoin';
-      c.p.heading = Math.atan2(player.pos.x - c.endSpot.x, player.pos.z - c.endSpot.z);
+      c.p.heading = Math.atan2(player.pos.x - c.endSpot.x, player.pos.z - c.endSpot.z) + (Math.random() - 0.5) * 1.6;
       if (c.endMode === 'huddle') { c.p.teleport(c.endSpot.x, c.endSpot.z); c.p.setVisible(true); this.ending.huddled++; }
       else {
         // out of the snow, from down the slope
@@ -399,7 +407,7 @@ export class Group {
         const cp = c.p;
         if (c.endMode === 'huddle') {
           c.sit = 0;
-          c.groundPose(dt, time, env, collapse, t > 11.5 && t < 16);
+          c.groundPose(dt, time, env, collapse, t > 11.5 + c.colDelay * 0.5 && t < 15.5 + c.colDelay, t);
         } else {
           if (t < 6.5) continue;
           if (!cp.group.visible) cp.setVisible(true);
@@ -421,7 +429,7 @@ export class Group {
       E.flying = true;
       list.forEach((c, k) => {
         const side = k % 2 ? -1 : 1, row = Math.floor(k / 2);
-        c.flyOff = new THREE.Vector3(side * (2.4 + 1.8 * row), 0.4 * row + side * 0.4, -1.0 - 1.8 * row);
+        c.flyOff = new THREE.Vector3(side * (2 + Math.random() * 2.5 + 1.6 * row), -0.4 + Math.random() * 1.6 + 0.3 * row, -0.5 - Math.random() * 2.2 - 1.6 * row);
         c.sit = 0; c.applySit();
         c.p.setVisible(true); c.p.collapse = 0; c.p.scripted = true; c.p.grounded = false; c.p.charge = 1;
       });
@@ -429,9 +437,9 @@ export class Group {
     const sh = Math.sin(player.heading), ch = Math.cos(player.heading);
     list.forEach((c, k) => {
       const cp = c.p, o = c.flyOff;
-      const wob = Math.sin(time * 0.9 + k * 1.9);
+      const wob = Math.sin(time * (0.6 + c.wf1 * 4) + c.ph) + 0.5 * Math.sin(time * (0.3 + c.wf2 * 5) + c.ph * 2);
       const tx = player.pos.x + ch * o.x + sh * o.z + wob * 0.6;
-      const ty = player.pos.y + o.y + Math.sin(time * 1.3 + k) * 0.5;
+      const ty = player.pos.y + o.y + Math.sin(time * (0.9 + c.wf2 * 6) + c.ph) * 0.7;
       const tz = player.pos.z - sh * o.x + ch * o.z;
       const prevX = cp.pos.x, prevY = cp.pos.y, prevZ = cp.pos.z;
       // carried along with the player, easing into its place in the skein
@@ -442,7 +450,7 @@ export class Group {
       const id = 1 / Math.max(dt, 1e-3);
       cp.vel.set((cp.pos.x - prevX) * id, (cp.pos.y - prevY) * id, (cp.pos.z - prevZ) * id);
       cp.speed = Math.min(24, Math.hypot(cp.vel.x, cp.vel.z) + 6);
-      cp.heading = player.heading;
+      cp.heading = player.heading + Math.sin(time * (0.4 + c.wf1 * 3) + c.ph) * 0.18;
       cp.flying = true; cp.grounded = false; cp.charge = 1;
       cp.update(dt, NO_INPUT, 0, time, env);
     });
