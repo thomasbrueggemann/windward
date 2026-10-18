@@ -810,7 +810,9 @@ function frame(nowMs, doRender = true) {
 }
 // adaptive resolution: drop the render scale when frames run long, recover it once there is headroom again
 const MAX_DPR = Math.min(window.devicePixelRatio, 1.75);
-const quality = { dpr: MAX_DPR, acc: 0, n: 0, last: 0, stable: 0 };
+// every change reallocates the canvas and the post-processing targets, which can flash a blank frame, so changes are kept rare:
+// once a raise fails to hold, `max` caps the scale there for the rest of the session instead of oscillating up and down
+const quality = { dpr: MAX_DPR, max: MAX_DPR, raised: false, acc: 0, n: 0, last: 0, stable: 0 };
 function adaptResolution(t) {
   const ft = t - (quality.last || t); quality.last = t;
   if (ft <= 0 || ft > 100 || document.hidden || game.state === 'paused') return;   // ignore stalls and background tabs
@@ -818,10 +820,15 @@ function adaptResolution(t) {
   if (quality.acc < 1500) return;
   const avg = quality.acc / quality.n; quality.acc = 0; quality.n = 0;
   let next = quality.dpr;
-  if (avg > 21 && quality.dpr > 0.7) { next = Math.max(0.7, quality.dpr - 0.15); quality.stable = 0; }
-  else if (avg < 17.6 && quality.dpr < MAX_DPR && ++quality.stable >= 4) { next = Math.min(MAX_DPR, quality.dpr + 0.1); quality.stable = 0; }
+  let raised = false;
+  if (avg > 21 && quality.dpr > 0.7) {
+    next = Math.max(0.7, quality.dpr - 0.15); quality.stable = 0;
+    if (quality.raised) quality.max = next;
+  } else if (avg < 17.6 && quality.dpr < quality.max && ++quality.stable >= 4) {
+    next = Math.min(quality.max, quality.dpr + 0.1); quality.stable = 0; raised = true;
+  }
   if (next !== quality.dpr) {
-    quality.dpr = next;
+    quality.dpr = next; quality.raised = raised;
     renderer.setPixelRatio(next); composer.setPixelRatio(next);
     renderer.setSize(window.innerWidth, window.innerHeight); composer.setSize(window.innerWidth, window.innerHeight);
   }
@@ -852,7 +859,10 @@ window.__view = ({ p = null, dx = 0, yaw = null, pitch = null, dist = null, t = 
   __advance(t);
 };
 
+let sizedW = window.innerWidth, sizedH = window.innerHeight;
 window.addEventListener('resize', () => {
+  if (window.innerWidth === sizedW && window.innerHeight === sizedH) return;   // a no-op resize would still clear the canvas
+  sizedW = window.innerWidth; sizedH = window.innerHeight;
   renderer.setSize(window.innerWidth, window.innerHeight);
   composer.setSize(window.innerWidth, window.innerHeight);
   camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix();
