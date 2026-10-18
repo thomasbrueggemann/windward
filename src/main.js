@@ -193,12 +193,12 @@ interiors.attach({ renderer, composer, camera, cam, player, group, fx, audio, gr
 
 // ------------------------------------------------------------------ settings (persisted per browser)
 const settings = { sens: 1, invertY: false, volume: 0.85, calm: false, difficulty: 'journey' };
-try { Object.assign(settings, JSON.parse(localStorage.getItem('journey-settings') || '{}')); } catch (e) { /* storage unavailable */ }
+try { Object.assign(settings, JSON.parse(localStorage.getItem('windward-settings') || '{}')); } catch (e) { /* storage unavailable */ }
 function applySettings() {
   cam.sens = settings.sens; cam.invertY = settings.invertY; cam.calm = settings.calm; audio.setVolume && audio.setVolume(settings.volume);
   passages.setDifficulty(q.get('diff') || settings.difficulty);   // ?diff= tries a level without saving it
   const note = document.getElementById('diffNote'); if (note) note.textContent = passages.diff.note;
-  try { localStorage.setItem('journey-settings', JSON.stringify(settings)); } catch (e) { /* storage unavailable */ }
+  try { localStorage.setItem('windward-settings', JSON.stringify(settings)); } catch (e) { /* storage unavailable */ }
 }
 applySettings();
 window.__THREE = THREE;
@@ -246,7 +246,7 @@ function updateChapter(prog) {
 }
 
 // ------------------------------------------------------------------ progress (per browser): resume at the last chapter reached
-const SAVE_KEY = 'journey-progress';
+const SAVE_KEY = 'windward-progress';
 function saveProgress(o) { try { localStorage.setItem(SAVE_KEY, JSON.stringify({ ...o, seed: SEED })); } catch (e) { /* storage unavailable */ } }
 function loadProgress() { try { return JSON.parse(localStorage.getItem(SAVE_KEY) || 'null'); } catch (e) { return null; } }
 function clearProgress() { try { localStorage.removeItem(SAVE_KEY); } catch (e) { /* storage unavailable */ } }
@@ -909,14 +909,14 @@ startBtn.addEventListener('click', () => {
   if (game.state !== 'title') return;
   if (loadProgress()) clearProgress();
   // this world was rebuilt from the save: a new journey needs a fresh one
-  if (saved && saved.seed === SEED && !q.has('seed')) { try { sessionStorage.setItem('journey-begin', '1'); } catch (e) { /* storage unavailable */ } location.reload(); return; }
+  if (saved && saved.seed === SEED && !q.has('seed')) { try { sessionStorage.setItem('windward-begin', '1'); } catch (e) { /* storage unavailable */ } location.reload(); return; }
   begin();
 });
 if (saved && CHAPTERS[saved.chapter]) {
   const cont = $('continue');
   cont.style.display = '';
   cont.innerHTML = `Continue <span>${CHAPTERS[saved.chapter].n} · ${CHAPTERS[saved.chapter].name}</span>`;
-  startBtn.textContent = 'New journey';
+  startBtn.textContent = 'New crossing';
   cont.addEventListener('click', () => {
     if (game.state !== 'title') return;
     const z = zAtProgress(CHAPTERS[saved.chapter].p + 0.004);
@@ -935,8 +935,8 @@ if (saved && CHAPTERS[saved.chapter]) {
 }
 window.addEventListener('keydown', (e) => { if (game.state === 'title' && (e.code === 'Enter' || e.code === 'Space')) begin(); });
 if (q.has('auto')) begin();
-else if ((() => { try { const b = sessionStorage.getItem('journey-begin'); sessionStorage.removeItem('journey-begin'); return b; } catch (e) { return null; } })()) {
-  begin();   // straight in after "New journey" reloaded a fresh world; sound starts with the first input
+else if ((() => { try { const b = sessionStorage.getItem('windward-begin'); sessionStorage.removeItem('windward-begin'); return b; } catch (e) { return null; } })()) {
+  begin();   // straight in after "New crossing" reloaded a fresh world; sound starts with the first input
   const wake = () => { if (!q.has('mute')) audio.start(); window.removeEventListener('pointerdown', wake); window.removeEventListener('keydown', wake); };
   window.addEventListener('pointerdown', wake); window.addEventListener('keydown', wake);
 }

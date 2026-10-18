@@ -6,7 +6,7 @@ import { ClothBanner } from './cloth.js';
 import { Guardian, GUARDIAN_TUNING } from './creatures.js';
 
 /**
- * Challenge passages: one readable, fair test per chapter, escalating along the route. Journey has no death, so
+ * Challenge passages: one readable, fair test per chapter, escalating along the route. this game has no death, so
  * failing only ever costs ground: you fall into a chasm and walk out along its floor, get pushed back by the wind,
  * slide down the ice, lose your scarf's charge to a guardian. There is always a way through or a retry close by.
  *
@@ -32,7 +32,7 @@ export const DIFFICULTIES = {
     gust: { warn: 2.8, blow: 2.2, calm: 5.5, strength: 0.6 }, slip: 0.3, frost: 0.25,
   },
   journey: {
-    label: 'Journey', note: 'as the journey was meant to be walked', cliff: 1, lift: 0, lockRecharge: true,
+    label: 'Standard', note: 'the crossing as it was meant to be walked', cliff: 1, lift: 0, lockRecharge: true,
     guard: { alert: 1, chase: 1, cos: 0.93, tear: 2, near: 13 }, extraGuardians: true,
     flood: { speed: 0.45, pull: 1.6 }, stream: 1, gustScale: 1,
     gust: { warn: 2.1, blow: 3.0, calm: 4.2, strength: 2.0 }, slip: 1, frost: 1,

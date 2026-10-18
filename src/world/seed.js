@@ -2,7 +2,7 @@
 // Resolution order: `?seed=123` → the seed of a saved journey (so Continue rebuilds the same world) → random.
 // Everything built at load time draws from independent streams via rngFor(tag), so adding draws to one
 // subsystem never reshuffles another.
-const SAVE_KEY = 'journey-progress';
+const SAVE_KEY = 'windward-progress';
 
 function resolveSeed() {
   if (typeof location === 'undefined') return 1;

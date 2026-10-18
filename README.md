@@ -1,6 +1,6 @@
-# Journey — a three.js tribute
+# Windward
 
-An unofficial, non-commercial fan homage to thatgamecompany's *Journey* (2012), built from scratch with
+A long walk into the wind: an unofficial, non-commercial fan project inspired by thatgamecompany's *Journey* (2012), built from scratch with
 [three.js](https://threejs.org). No assets are used: terrain, textures, models and music are all procedural.
 
 ```bash
@@ -43,7 +43,7 @@ All flight is fed by the scarf: symbols lengthen it and so its charge.
   trail of light (each source once every 6 s).
 
 - **Slide hazards** (`src/world/slidehazards.js`): boulders sit in the floor and low walls of both long sand slides
-  (steer round them or jump them; a hit costs speed, a short stun and a hop). Sandworms are Dune-sized and unhurried: the
+  (steer round them or jump them; a hit costs speed, a short stun and a hop). Sandworms are vast and unhurried: the
   sand shakes and dust heaves for ~2.5 s to a deep rock-grinding rumble, then a worm slowly rises out of the sand facing you
   right where you were heading — a huge, low, armoured body skimming the surface, a round maw wide open and bristling with hundreds of needle teeth around a dark throat (you can glide
   or jump over it) — ploughs sideways through the sand, and sinks back. Hit one and you are flung up and lose scarf charge. Companions get hit too; `?auto` steers round both.
@@ -101,5 +101,5 @@ autopilot detour through every doorway.
 
 ## Credits
 
-Design inspiration: *Journey* by thatgamecompany (Jenova Chen, Kellee Santiago, John Edwards, Matt Nava,
+Windward is inspired by *Journey* by thatgamecompany (Jenova Chen, Kellee Santiago, John Edwards, Matt Nava,
 Austin Wintory). This project is not affiliated with or endorsed by them or Sony.

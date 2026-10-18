@@ -13,7 +13,7 @@ import { weather, finish } from './stone.js';
  */
 
 const ROCK_HIT = 0.5;            // body radius (m) added to a rock's
-// Dune-sized and unhurried: a long swelling rumble, a slow rise, a long look around, a slow sinking away
+// Vast and unhurried: a long swelling rumble, a slow rise, a long look around, a slow sinking away
 const WORM_RUMBLE = 2.4, WORM_ERUPT = 2.0, WORM_UP = 4.5, WORM_RETREAT = 3.2, WORM_SCALE = 2.6, WORM_DRIFT = 0.9;
 // rings: radial segments, body rings, mouth rings (rim, then a funnel down to the throat)
 const M = 28, NB = 40;

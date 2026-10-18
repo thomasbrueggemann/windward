@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-<title>Journey — a three.js tribute</title>
+<title>Windward</title>
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
@@ -73,29 +73,29 @@
 <div id="vision"><canvas id="mural"></canvas></div>
 <div id="fade"></div>
 <div id="chapter"></div>
-<div id="end" class="overlay"><h2>THANK YOU FOR TRAVELLING</h2><p>press any key to journey again</p><p id="endStats"></p></div>
+<div id="end" class="overlay"><h2>THANK YOU FOR TRAVELLING</h2><p>press any key to set out again</p><p id="endStats"></p></div>
 <div id="pause" class="overlay">
   <h2>PAUSED</h2>
   <label class="row">Look sensitivity <input id="sens" type="range" min="0.3" max="2.5" step="0.05"></label>
   <label class="row">Invert vertical look <input id="invert" type="checkbox"></label>
   <label class="row">Volume <input id="volume" type="range" min="0" max="1" step="0.01"></label>
   <label class="row">Reduce motion <input id="calm" type="checkbox"></label>
-  <label class="row">Challenge <select id="difficulty"><option value="gentle">Gentle</option><option value="journey">Journey</option><option value="trial">Trial</option></select></label>
+  <label class="row">Challenge <select id="difficulty"><option value="gentle">Gentle</option><option value="journey">Standard</option><option value="trial">Trial</option></select></label>
   <div id="diffNote"></div>
   <div class="keys"><b>W A S D</b> walk · <b>mouse</b> look · <b>wheel</b> zoom<br><b>space</b> jump — hold to fly on your scarf<br><b>C</b> glide — robe spread, slow sink, fast and free<br><b>shift</b> hold to dive — release near the ground to swoop<br>in the air: <b>Z</b> / <b>X</b> barrel roll · <b>R</b> loop · <b>V</b> twirl<br>wind columns lift you · fly close to cloth creatures for a boost<br><b>E</b> / <b>right-click</b> sing — hold and release to call out<br><b>Esc</b> pause</div>
   <button id="resume" class="btn">Resume</button>
   <div id="worldSeed"></div>
 </div>
 <div id="title" class="overlay">
-  <h1>JOURNEY</h1>
-  <div class="sub">a three.js tribute</div>
+  <h1>WINDWARD</h1>
+  <div class="sub">a long walk into the wind</div>
   <div class="spacer"></div>
   <div class="bottom">
     <button id="continue" style="display:none"></button>
     <button id="start" disabled>Preparing…</button>
     <div id="loading">headphones recommended</div>
   </div>
-  <div class="legal">An unofficial, non-commercial fan homage inspired by thatgamecompany's “Journey” (2012). Not affiliated with or endorsed by thatgamecompany or Sony. All code, art and music here are original and procedurally generated.</div>
+  <div class="legal">Windward is an unofficial, non-commercial fan project inspired by thatgamecompany's “Journey” (2012). Not affiliated with or endorsed by thatgamecompany or Sony. All code, art and music here are original and procedurally generated.</div>
 </div>
 <div id="err"></div>
 <script type="module" src="/src/main.js"></script>
