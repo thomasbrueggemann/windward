@@ -715,7 +715,7 @@ function frame(nowMs, doRender = true) {
     for (const e of slides.events) {
       if (e.type === 'kick') audio.slideKick && audio.slideKick();
       else if (e.type === 'worm-rumble') audio.wormRumble && audio.wormRumble();
-      else if (e.type === 'worm-erupt') { if (e.near < 90 && audio.wormRoar) audio.wormRoar(); cam.shake = Math.max(cam.shake, 0.3 * (1 - clamp(e.near / 90, 0, 1))); }
+      else if (e.type === 'worm-erupt') { if (e.near < 140 && audio.wormRoar) audio.wormRoar(); cam.shake = Math.max(cam.shake, 0.3 * (1 - clamp(e.near / 120, 0, 1))); }
       else if (e.type === 'bump' && e.mine) { audio.thud && audio.thud(e.kind === 'worm'); cam.shake = Math.max(cam.shake, e.kind === 'worm' ? 0.45 : 0.25); }
     }
     slides.events.length = 0;

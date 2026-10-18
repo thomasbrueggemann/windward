@@ -364,23 +364,47 @@ export class AudioEngine {
     const g = ctx.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(big ? 0.28 : 0.18, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.4);
     o.connect(g); g.connect(this.sfxBus); o.start(t); o.stop(t + 0.45);
   }
-  /** The sand heaving before a sandworm comes up: a low swelling rumble. */
-  wormRumble() {
-    if (!this.ready) return; const ctx = this.ctx, t = ctx.currentTime;
-    const s = this._noiseSrc(false); const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.setValueAtTime(90, t); f.frequency.linearRampToValueAtTime(260, t + 1.0);
-    const g = ctx.createGain(); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.4, t + 0.9); g.gain.exponentialRampToValueAtTime(0.0001, t + 1.5);
-    s.connect(f); f.connect(g); g.connect(this.sfxBus); s.start(t); s.stop(t + 1.6);
-  }
-  /** The worm breaks the surface: a ragged, falling roar over a burst of sand. */
-  wormRoar() {
-    if (!this.ready) return; const ctx = this.ctx, t = ctx.currentTime;
-    for (const f0 of [96, 101]) {
-      const o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(f0 * 0.5, t + 1.3);
-      const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.setValueAtTime(900, t); lp.frequency.exponentialRampToValueAtTime(220, t + 1.3);
-      const g = ctx.createGain(); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.13, t + 0.08); g.gain.exponentialRampToValueAtTime(0.0001, t + 1.4);
-      o.connect(lp); lp.connect(g); g.connect(this.sfxBus); o.start(t); o.stop(t + 1.5);
+  /** Rock being ground and crushed deep underground: a sub-bass bed, a slow granular grind and heavy crunches. */
+  _grind(t, dur, vol, crunches) {
+    const ctx = this.ctx;
+    // sub bed: low saws through a lowpass, pushed through a soft clipper so small speakers still get the harmonics
+    const clip = ctx.createWaveShaper(), curve = new Float32Array(257);
+    for (let i = 0; i < 257; i++) { const x = i / 128 - 1; curve[i] = Math.tanh(x * 3); }
+    clip.curve = curve;
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.setValueAtTime(140, t); lp.frequency.linearRampToValueAtTime(320, t + dur * 0.6); lp.frequency.linearRampToValueAtTime(110, t + dur);
+    const bus = ctx.createGain(); bus.gain.setValueAtTime(0, t); bus.gain.linearRampToValueAtTime(vol, t + dur * 0.45); bus.gain.linearRampToValueAtTime(vol * 0.8, t + dur * 0.75); bus.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    for (const f0 of [41, 43.5, 61]) {
+      const o = ctx.createOscillator(); o.type = 'sawtooth';
+      o.frequency.setValueAtTime(f0, t); o.frequency.linearRampToValueAtTime(f0 * 1.12, t + dur * 0.5); o.frequency.linearRampToValueAtTime(f0 * 0.82, t + dur);
+      o.connect(clip); o.start(t); o.stop(t + dur + 0.1);
     }
-    this._noiseBurst(t, 1.0, 700, 0.6, 0.12);
+    clip.connect(lp); lp.connect(bus); bus.connect(this.sfxBus);
+    // grind: noise chopped by a slow irregular tremolo, like slabs sliding over each other
+    const s = this._noiseSrc(true); const nf = ctx.createBiquadFilter(); nf.type = 'lowpass'; nf.frequency.value = 260; nf.Q.value = 1.2;
+    const gg = ctx.createGain(); gg.gain.value = 0;
+    const lfo = ctx.createOscillator(); lfo.type = 'sawtooth'; lfo.frequency.setValueAtTime(6, t); lfo.frequency.linearRampToValueAtTime(11, t + dur * 0.5); lfo.frequency.linearRampToValueAtTime(5, t + dur);
+    const lg = ctx.createGain(); lg.gain.value = vol * 0.9;
+    lfo.connect(lg); lg.connect(gg.gain);
+    const env = ctx.createGain(); env.gain.setValueAtTime(0, t); env.gain.linearRampToValueAtTime(1, t + dur * 0.4); env.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    s.connect(nf); nf.connect(gg); gg.connect(env); env.connect(this.sfxBus);
+    s.start(t); s.stop(t + dur + 0.1); lfo.start(t); lfo.stop(t + dur + 0.1);
+    // crunches: stone breaking, heavy and low, a few of them closer together as it builds
+    for (let i = 0; i < crunches; i++) {
+      const u = Math.pow(Math.random(), 0.8), at = t + u * dur * 0.9;
+      this._noiseBurst(at, 0.1 + Math.random() * 0.14, 90 + Math.random() * 200, 1.4, vol * (0.5 + 0.7 * u), 'lowpass');
+      if (Math.random() < 0.5) this._noiseBurst(at + 0.02, 0.05, 700 + Math.random() * 900, 3, vol * 0.1, 'bandpass');
+    }
+  }
+  /** The sand heaving before a sandworm comes up: a deep grinding that builds. */
+  wormRumble() {
+    if (!this.ready) return;
+    this._grind(this.ctx.currentTime, 3.2, 0.34, 9);
+  }
+  /** The worm breaks the surface: the deep rock-crushing grind at full weight, with a heavy initial crack. */
+  wormRoar() {
+    if (!this.ready) return; const t = this.ctx.currentTime;
+    this._noiseBurst(t, 0.5, 120, 1.0, 0.3, 'lowpass');
+    this._grind(t, 4.6, 0.4, 16);
   }
   /** An aerial maneuver: a quick banded whoosh with a small bell on top. */
   maneuver(kind) {

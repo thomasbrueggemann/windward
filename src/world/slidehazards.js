@@ -13,7 +13,8 @@ import { weather, finish } from './stone.js';
  */
 
 const ROCK_HIT = 0.5;            // body radius (m) added to a rock's
-const WORM_RUMBLE = 1.0, WORM_ERUPT = 0.4, WORM_UP = 2.6, WORM_RETREAT = 0.9;
+// Dune-sized and unhurried: a long swelling rumble, a slow rise, a long look around, a slow sinking away
+const WORM_RUMBLE = 2.4, WORM_ERUPT = 2.0, WORM_UP = 4.5, WORM_RETREAT = 3.2, WORM_SCALE = 1.7, WORM_DRIFT = 0.9;
 const M = 16, NB = 28, NR = NB + 5;      // radial segments, body rings, total rings (body + 5 mouth rings)
 const BASE = [0.6, 0.4, 0.24], RIB = [0.82, 0.64, 0.42], INSIDE = [0.42, 0.07, 0.06], IVORY = [0.95, 0.9, 0.78];
 const _c = {}, _tg = new THREE.Vector3(), _e1 = new THREE.Vector3(), _e2 = new THREE.Vector3(), _L = new THREE.Vector3(), _a = new THREE.Vector3(), _b = new THREE.Vector3();
@@ -52,8 +53,17 @@ class Worm {
     const P = coursePoint(this.d, this.s, lat, _c);
     this.lat = lat; this.x = P.x; this.z = P.z; this.tx = P.tx; this.tz = P.tz; this.nx = -P.tz; this.nz = P.tx;
     this.y = terrainHeight(P.x, P.z);
+    this.dir = lat > 0 ? -1 : 1; this.reach = tab(this.d.Ft, this.s) + 3;
     this.state = 'rumble'; this.t = 0; this.ext = 0; this.mesh.visible = true; this.lastHit = new WeakMap();
     this.pose(0);
+  }
+
+  /** The worm ploughs slowly sideways through the sand while it is up. */
+  drift(dt) {
+    this.lat += this.dir * WORM_DRIFT * dt;
+    if (Math.abs(this.lat) > this.reach) { this.lat = Math.sign(this.lat) * this.reach; this.dir = -this.dir; }
+    const P = coursePoint(this.d, this.s, this.lat, _c);
+    this.x = P.x; this.z = P.z; this.y = terrainHeight(P.x, P.z);
   }
 
   get active() { return this.state === 'erupt' || this.state === 'up' || this.state === 'retreat'; }
@@ -61,18 +71,18 @@ class Worm {
   /** Shape the spine for the current extension and write the rings. */
   pose(time) {
     const e = this.ext;
-    const Hy = -1.3 + 7.4 * e, ah = -4.2 * e + Math.sin(time * 1.7 + this.ph) * 0.5 * e, sw = Math.sin(time * 1.1 + this.ph) * 0.9 * e;
+    const Hy = -1.3 + 7.4 * e, ah = -4.2 * e + Math.sin(time * 0.7 + this.ph) * 1.0 * e, sw = Math.sin(time * 0.45 + this.ph) * 2.2 * e;
     const p1y = -4.5 + (Hy + 4.5) * 0.6, p2a = ah + 3.0 * e, p2y = Hy + 2.6 * e;
     const at = (u, out) => {
       const w = 1 - u, b0 = w * w * w, b1 = 3 * w * w * u, b2 = 3 * w * u * u, b3 = u * u * u;
-      const a = b2 * p2a + b3 * ah, y = b0 * -4.5 + b1 * p1y + b2 * p2y + b3 * Hy, l = sw * u * u;
+      const S = WORM_SCALE, a = (b2 * p2a + b3 * ah) * S, y = (b0 * -4.5 + b1 * p1y + b2 * p2y + b3 * Hy) * S, l = sw * u * u * S;
       return out.set(this.x + this.tx * a + this.nx * l, this.y + y, this.z + this.tz * a + this.nz * l);
     };
     const P = this.pts, R = this.rad, pos = this.pos, nrm = this.nrm;
     for (let i = 0; i < NB; i++) {
       const u = i / (NB - 1) * 0.97;
       at(u, _a); P[i * 3] = _a.x; P[i * 3 + 1] = _a.y; P[i * 3 + 2] = _a.z;
-      R[i] = (1.2 - 0.25 * smooth(0.1, 0.9, u)) * (1 + 0.06 * Math.sin(i * 2.3 - time * 2.2));
+      R[i] = (1.2 - 0.25 * smooth(0.1, 0.9, u)) * WORM_SCALE * (1 + 0.05 * Math.sin(i * 1.7 - time * 0.9));
     }
     _L.set(this.nx, 0, this.nz);
     const ring = (i, cx, cy, cz, tgx, tgy, tgz, r, tooth = 0) => {
@@ -96,7 +106,7 @@ class Worm {
     const k = NB - 1, tx = P[k * 3] - P[(k - 1) * 3], ty = P[k * 3 + 1] - P[(k - 1) * 3 + 1], tz = P[k * 3 + 2] - P[(k - 1) * 3 + 2];
     const tl = Math.hypot(tx, ty, tz) || 1, ux = tx / tl, uy = ty / tl, uz = tz / tl;
     const cx = P[k * 3], cy = P[k * 3 + 1], cz = P[k * 3 + 2];
-    [[0.4, 1.85, 0.5], [0.65, 1.3, 0], [1.3, 0.8, 0], [2.0, 0.4, 0], [2.6, 0.03, 0]].forEach(([d, r, tooth], q) => ring(NB + q, cx + ux * d, cy + uy * d, cz + uz * d, tx, ty, tz, r, tooth));
+    [[0.4, 1.85, 0.5], [0.65, 1.3, 0], [1.3, 0.8, 0], [2.0, 0.4, 0], [2.6, 0.03, 0]].forEach(([d, r, tooth], q) => ring(NB + q, cx + ux * d * WORM_SCALE, cy + uy * d * WORM_SCALE, cz + uz * d * WORM_SCALE, tx, ty, tz, r * WORM_SCALE, tooth * WORM_SCALE));
     this.geo.attributes.position.needsUpdate = true; this.geo.attributes.normal.needsUpdate = true;
   }
 
@@ -189,7 +199,7 @@ export class SlideHazards {
     for (const w of this.worms) {
       if (w.state === 'idle') {
         if (riding && q.slide === w.d) {
-          const ahead = w.s - q.s, trig = clamp(player.speed * 1.7 + 4, 26, 62);
+          const ahead = w.s - q.s, trig = clamp(player.speed * 3.4 + 6, 55, 100);
           if (ahead > 4 && ahead < trig) {
             const reach = tab(w.d.Ft, w.s) + 2;
             w.start(clamp(q.d + (Math.random() - 0.5) * 2.4, -reach, reach));
@@ -209,39 +219,48 @@ export class SlideHazards {
         const k = w.t / WORM_RUMBLE;
         w.ext = 0.08 * smooth(0, 1, k);
         // the ground heaves: a widening ring of sand thrown up around the spot
-        const n = Math.floor(dt * (60 + 90 * k) + Math.random());
+        const n = Math.floor(dt * (80 + 160 * k) + Math.random());
         for (let i = 0; i < n; i++) {
-          const a = Math.random() * 6.28, rr = Math.random() * (1 + 2.4 * k);
+          const a = Math.random() * 6.28, rr = Math.random() * (2 + 5 * k);
           fx.dust.emit(w.x + Math.cos(a) * rr, w.y + 0.1, w.z + Math.sin(a) * rr, Math.cos(a) * (1 + 2 * k), 1.5 + Math.random() * (2 + 3 * k), Math.sin(a) * (1 + 2 * k),
-            0.9 + Math.random() * 0.6, 0.5 + Math.random() * 0.5, sand.r, sand.g * 0.95, sand.b * 0.85, 0.5, 0.8, 1.5, 1.2);
+            1.3 + Math.random() * 0.9, 0.8 + Math.random() * 0.8, sand.r, sand.g * 0.95, sand.b * 0.85, 0.5, 0.8, 1.5, 1.2);
         }
-        this.shake = Math.max(this.shake, 0.1 * k * (1 - smooth(10, 60, near)));
+        this.shake = Math.max(this.shake, 0.17 * k * k * (1 - smooth(15, 90, near)));
         if (w.t >= WORM_RUMBLE) {
           w.state = 'erupt'; w.t = 0;
           this.events.push({ type: 'worm-erupt', near });
-          for (let i = 0; i < 90; i++) {
-            const a = Math.random() * 6.28, sp = 2 + Math.random() * 7;
-            fx.dust.emit(w.x + Math.cos(a) * 0.8, w.y + 0.2, w.z + Math.sin(a) * 0.8, Math.cos(a) * sp, 3 + Math.random() * 7, Math.sin(a) * sp,
-              1.2 + Math.random(), 0.7 + Math.random() * 0.8, sand.r, sand.g * 0.95, sand.b * 0.85, 0.6, 0.6, 5, 1.4);
+          for (let i = 0; i < 120; i++) {
+            const a = Math.random() * 6.28, sp = 1.5 + Math.random() * 5;
+            fx.dust.emit(w.x + Math.cos(a) * 1.5, w.y + 0.2, w.z + Math.sin(a) * 1.5, Math.cos(a) * sp, 2 + Math.random() * 5, Math.sin(a) * sp,
+              2 + Math.random() * 1.5, 1.2 + Math.random() * 1.2, sand.r, sand.g * 0.95, sand.b * 0.85, 0.6, 0.6, 5, 1.4);
           }
           for (let i = 0; i < 24; i++) fx.sparkles.emit(w.x + (Math.random() - .5) * 3, w.y + 1 + Math.random() * 4, w.z + (Math.random() - .5) * 3, (Math.random() - .5) * 3, 2 + Math.random() * 3, (Math.random() - .5) * 3, 1.4, 0.1, 2.6, 1.9, 1.0, 0.8, 0.8, 0, -0.4);
         }
       } else if (w.state === 'erupt') {
         const k = Math.min(1, w.t / WORM_ERUPT);
-        w.ext = 0.08 + 0.92 * (1 - (1 - k) ** 3) + 0.08 * Math.sin(Math.PI * k);
-        this.shake = Math.max(this.shake, 0.2 * (1 - smooth(10, 70, near)));
+        w.ext = 0.08 + 0.92 * k * k * (3 - 2 * k);
+        w.drift(dt);
+        this.shake = Math.max(this.shake, 0.2 * (1 - smooth(15, 90, near)));
+        // the sand slides off the rising flanks in sheets
+        const nd = Math.floor(dt * 90 * k + Math.random());
+        for (let i = 0; i < nd; i++) {
+          const o = (((Math.random() * (NB - 4)) | 0) + 2) * 3, a = Math.random() * 6.28;
+          fx.dust.emit(w.pts[o] + Math.cos(a) * 2, Math.max(w.y, w.pts[o + 1] - 1), w.pts[o + 2] + Math.sin(a) * 2, Math.cos(a) * 1.5, -0.5, Math.sin(a) * 1.5, 1.8, 0.9, sand.r, sand.g * 0.95, sand.b * 0.85, 0.35, 0.6, 3, 1.2);
+        }
         if (k >= 1) { w.state = 'up'; w.t = 0; }
       } else if (w.state === 'up') {
-        w.ext = 1 + 0.025 * Math.sin(time * 3 + w.ph);
+        w.ext = 1 + 0.02 * Math.sin(time * 1.2 + w.ph);
+        w.drift(dt);
         // sand pours off the raised body
-        if (Math.random() < dt * 40) {
+        if (Math.random() < dt * 50) {
           const i = 6 + ((Math.random() * (NB - 8)) | 0), o = i * 3;
-          fx.dust.emit(w.pts[o] + (Math.random() - .5) * 1.5, w.pts[o + 1], w.pts[o + 2] + (Math.random() - .5) * 1.5, (Math.random() - .5), -1, (Math.random() - .5), 1.2, 0.35, sand.r, sand.g * 0.95, sand.b * 0.85, 0.4, 0.5, 6, 0.6);
+          fx.dust.emit(w.pts[o] + (Math.random() - .5) * 2.5, w.pts[o + 1], w.pts[o + 2] + (Math.random() - .5) * 2.5, (Math.random() - .5), -1, (Math.random() - .5), 1.8, 0.6, sand.r, sand.g * 0.95, sand.b * 0.85, 0.4, 0.5, 6, 0.6);
         }
         if (w.t >= WORM_UP) { w.state = 'retreat'; w.t = 0; }
       } else if (w.state === 'retreat') {
         const k = Math.min(1, w.t / WORM_RETREAT);
         w.ext = 1 - k * k * (3 - 2 * k);
+        w.drift(dt * 0.5);
         if (Math.random() < dt * 60) {
           const a = Math.random() * 6.28;
           fx.dust.emit(w.x + Math.cos(a) * 1.2, w.y + 0.2, w.z + Math.sin(a) * 1.2, Math.cos(a) * 2, 1 + Math.random() * 2, Math.sin(a) * 2, 1, 0.5, sand.r, sand.g * 0.95, sand.b * 0.85, 0.4, 0.8, 2, 1);
@@ -256,7 +275,7 @@ export class SlideHazards {
       if (b.slide < 0.3 || b.scripted) continue;
       const p = b.pos;
       for (const w of this.worms) {
-        if (!w.active || w.ext < 0.3 || Math.abs(p.x - w.x) > 9 || Math.abs(p.z - w.z) > 9) continue;
+        if (!w.active || w.ext < 0.3 || Math.abs(p.x - w.x) > 14 || Math.abs(p.z - w.z) > 14) continue;
         if ((w.lastHit.get(b) || -9) > time - 1.8) continue;
         const h = w.hit(p.x, p.y + 0.9, p.z);
         if (!h) continue;

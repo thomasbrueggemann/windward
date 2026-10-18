@@ -43,9 +43,9 @@ All flight is fed by the scarf: symbols lengthen it and so its charge.
   trail of light (each source once every 6 s).
 
 - **Slide hazards** (`src/world/slidehazards.js`): boulders sit in the floor and low walls of both long sand slides
-  (steer round them or jump them; a hit costs speed, a short stun and a hop). Sandworms rise ahead of the rider: the
-  sand shakes and dust heaves for a second, then a worm rears up facing you right where you were heading, sways, and
-  sinks back. Hit one and you are flung up and lose scarf charge. Companions get hit too; `?auto` steers round both.
+  (steer round them or jump them; a hit costs speed, a short stun and a hop). Sandworms are Dune-sized and unhurried: the
+  sand shakes and dust heaves for ~2.5 s to a deep rock-grinding rumble, then a worm slowly rears up facing you right
+  where you were heading, ploughs sideways through the sand, and sinks back. Hit one and you are flung up and lose scarf charge. Companions get hit too; `?auto` steers round both.
 
 The camera pulls back and widens in a glide; a dive tucks it in with an FOV kick and slight shake (both off
 with *Reduce motion*). Each mode has its own sound: soft flaps, a broad gliding wind, a whoosh that rises in pitch
