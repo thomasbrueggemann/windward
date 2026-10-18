@@ -356,6 +356,16 @@ export class AudioEngine {
     const g = ctx.createGain(); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.16 * Math.min(1.3, strength), t + 0.12); g.gain.exponentialRampToValueAtTime(0.0001, t + 1.3);
     s.connect(f); f.connect(g); g.connect(this.sfxBus); s.start(t); s.stop(t + 1.4);
   }
+  /** An aerial maneuver: a quick banded whoosh with a small bell on top. */
+  maneuver(kind) {
+    if (!this.ready) return; const ctx = this.ctx, t = ctx.currentTime;
+    const s = this._noiseSrc(false); const f = ctx.createBiquadFilter(); f.type = 'bandpass'; f.Q.value = 2;
+    const up = kind === 'loop';
+    f.frequency.setValueAtTime(up ? 600 : 1800, t); f.frequency.exponentialRampToValueAtTime(up ? 2600 : 700, t + 0.45); f.frequency.exponentialRampToValueAtTime(up ? 900 : 1500, t + 0.95);
+    const g = ctx.createGain(); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.1, t + 0.1); g.gain.exponentialRampToValueAtTime(0.0001, t + 1.0);
+    s.connect(f); f.connect(g); g.connect(this.sfxBus); s.start(t); s.stop(t + 1.1);
+    this._bell(kind === 'loop' ? 81 : kind === 'twirl' ? 84 : 79, t + 0.04, 0.03, 1.2);
+  }
   /** A ribbon boost: a rising run of bells and a bright rush. */
   ribbon() {
     if (!this.ready) return; const t = this.ctx.currentTime;

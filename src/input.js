@@ -12,7 +12,7 @@ export class Input {
     this.mouseSing = false;
     this.touch = { mx: 0, my: 0, jump: false, sing: false, dive: false, id: null, ox: 0, oy: 0, lookId: null, lx: 0, ly: 0 };
     this.enabled = true;
-    this._lastPad = { a: false, start: false, lb: false };
+    this._lastPad = { a: false, start: false, lb: false, dp: 0 };
     this.allowLock = false;
     this.lockedOnce = false;
     const k = (e, down) => {
@@ -58,6 +58,8 @@ export class Input {
         if (key === 'sing') this.singTap = true;
         else if (key === 'jump') this.pressedEdge.add('Space');
         else if (key === 'glide') this.pressedEdge.add('KeyC');
+        else if (key === 'roll') this.pressedEdge.add(t.mx < -0.3 ? 'KeyZ' : 'KeyX');
+        else if (key === 'loop') this.pressedEdge.add('KeyR');
         e.preventDefault();
       }, { passive: false });
       b.addEventListener('touchend', (e) => { t[key] = false; e.preventDefault(); });
@@ -65,6 +67,7 @@ export class Input {
     };
     mk('FLY', 128, 26, 'jump'); mk('SING', 36, 26, 'sing');
     mk('GLIDE', 150, 116, 'glide', true); mk('DIVE', 70, 116, 'dive', true);
+    mk('ROLL', 150, 190, 'roll', true); mk('LOOP', 70, 190, 'loop', true);
     el.addEventListener('touchstart', (e) => {
       for (const c of e.changedTouches) {
         if (c.clientX < innerWidth * 0.45 && t.id === null) { t.id = c.identifier; t.ox = c.clientX; t.oy = c.clientY; }
@@ -99,6 +102,9 @@ export class Input {
     // flight modes: Shift held = dive, C (or G) toggles glide
     let dive = k.has('ShiftLeft') || k.has('ShiftRight') || this.touch.dive;
     let glidePressed = this.pressedEdge.has('KeyC') || this.pressedEdge.has('KeyG');
+    // aerial maneuvers: Z / X barrel roll left / right, R loop, V twirl (gamepad d-pad: left / right / up / down)
+    const pe = this.pressedEdge;
+    let maneuver = pe.has('KeyZ') ? 'rollL' : pe.has('KeyX') ? 'rollR' : pe.has('KeyR') ? 'loop' : pe.has('KeyV') ? 'twirl' : null;
     this.singTap = false;
     let lookX = this.lookX, lookY = this.lookY;
     this.lookX = this.lookY = 0;
@@ -116,6 +122,9 @@ export class Input {
       dive ||= !!(p.buttons[5] && p.buttons[5].pressed);
       const lb = !!(p.buttons[4] && p.buttons[4].pressed) || !!(p.buttons[3] && p.buttons[3].pressed);
       glidePressed ||= lb && !this._lastPad.lb; this._lastPad.lb = lb;
+      const dp = (p.buttons[14] && p.buttons[14].pressed ? 1 : 0) | (p.buttons[15] && p.buttons[15].pressed ? 2 : 0) | (p.buttons[12] && p.buttons[12].pressed ? 4 : 0) | (p.buttons[13] && p.buttons[13].pressed ? 8 : 0);
+      const dpNew = dp & ~this._lastPad.dp; this._lastPad.dp = dp;
+      maneuver ||= dpNew & 1 ? 'rollL' : dpNew & 2 ? 'rollR' : dpNew & 4 ? 'loop' : dpNew & 8 ? 'twirl' : null;
       const st = !!(p.buttons[9] && p.buttons[9].pressed);
       padStart = st && !this._lastPad.start; this._lastPad.start = st;
       break;
@@ -128,6 +137,6 @@ export class Input {
     const pausePressed = this.pressedEdge.has('Escape') || this.pressedEdge.has('KeyP') || padStart;
     const zoom = this.zoom; this.zoom = 0;
     this.pressedEdge.clear();
-    return { mx, my, jump, jumpPressed, sing, dive, glide: false, glidePressed, lookX, lookY, anyKey, pausePressed, zoom };
+    return { mx, my, jump, jumpPressed, sing, dive, glide: false, glidePressed, maneuver, lookX, lookY, anyKey, pausePressed, zoom };
   }
 }

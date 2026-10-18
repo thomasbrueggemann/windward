@@ -492,6 +492,10 @@ const SWOOP_MAX = 36;                                             // horizontal 
 const AIR_MAX = 36;
 const SOAR_RISE = 11;
 const SL_TURN = 2.2, SL_G = 13, SL_FLOW = 0.55, SL_MIN = 8.5, SL_MAX = 28;      // slide: carve rate, gravity along the course, pull to its pace
+// aerial maneuvers (keys: Z / X roll, R loop, V twirl): the whole traveler turns about its middle while the flight path bends with it
+const MV_PIVOT = 0.65;
+const _MVX = new THREE.Vector3(1, 0, 0), _MVY = new THREE.Vector3(0, 1, 0), _MVZ = new THREE.Vector3(0, 0, 1);
+const _mvQI = new THREE.Quaternion(), _mvP = new THREE.Vector3();
 const RIBBON_R = 4.5, RIBBON_BOOST = 8, RIBBON_CD = 6, RIBBON_MIN_SPEED = 5;
 
 const exp = (k, dt) => 1 - Math.exp(-k * dt);
@@ -573,6 +577,11 @@ export class Player {
     this._ribbonCd = new WeakMap();
     this._clock = 0;
     this._flapT = 0;
+    this.mv = null;          // running maneuver: { kind: roll | loop | twirl, dir, t, dur, ... }
+    this.mvQuat = new THREE.Quaternion(); // its rotation of the whole traveler (group-local)
+    this.mvVel = new THREE.Vector3();     // extra velocity the maneuver adds to the flight path (not fed back into v)
+    this.mvAmp = 0; this.mvK = 0;
+    this.mvPend = null; this.mvPendT = 0; // a press made a moment too early is kept briefly
     this.stats = { lastSwoop: null, peakDive: 0 };
     this._upd = { k: 0, sx: 0, sz: 0, cx: 0, cz: 0 };
 
@@ -588,6 +597,7 @@ export class Player {
     this.vel.set(0, 0, 0);
     this.grounded = true; this.airT = 0;
     this.mode = 'ground'; this.flying = false; this.glideLatch = false; this.swoopT = 0; this.boostT = 0;
+    this.mv = null; this.mvQuat.identity(); this.mvVel.set(0, 0, 0);
     this.group.position.copy(this.pos);
     this._lastGy = this.pos.y;
     this._updateAnchor();
@@ -613,7 +623,10 @@ export class Player {
     // the neck, just behind the shoulders, following the body's lean and bob
     const up = 1.13 * (1 - 0.8 * this.collapse);
     const fwd = Math.sin(this.lean) * up - 0.1 + this.body.position.z;
-    a.set(this.pos.x + sy * fwd, this.pos.y + this.body.position.y + Math.cos(this.lean) * up, this.pos.z + cy * fwd);
+    const ly = this.body.position.y + Math.cos(this.lean) * up;
+    // a maneuver turns the traveler about its middle: carry the neck with it
+    _mvP.set(0, ly - MV_PIVOT, fwd).applyQuaternion(this.mvQuat);
+    a.set(this.pos.x + sy * _mvP.z + cy * _mvP.x, this.pos.y + MV_PIVOT + _mvP.y, this.pos.z + cy * _mvP.z - sy * _mvP.x);
   }
 
   /** @param camYaw radians; camera sits behind the player at this yaw */
@@ -695,6 +708,9 @@ export class Player {
       if (mode === 'soar' && prevMode !== 'soar') this.events.push({ type: 'soar' });
       if (mode === 'soar') this.glideLatch = true;         // sail off the top of a column in a glide
       this.mode = mode;
+      if (this.scripted) this.mv = null;
+      if (inp.maneuver) { this.mvPend = inp.maneuver; this.mvPendT = 0.35; } else this.mvPendT -= dt;
+      if (this.mvPend && this.mvPendT > 0 && canAct && !this.grounded && !this.mv && hAbove > 3) { this._startManeuver(this.mvPend, hAbove); this.mvPend = null; }
       this.flying = mode === 'flutter';
       this.swoopT = Math.max(0, this.swoopT - dt);
       this.boostT = Math.max(0, this.boostT - dt);
@@ -815,9 +831,11 @@ export class Player {
       this.speed = Math.min(hs, cap);
       if (mode === 'dive') this.stats.peakDive = Math.max(this.stats.peakDive, Math.hypot(hs, v.y));
 
+      this._maneuver(dt, hAbove);
       // integrate
       const prevY = p.y;
-      p.x += v.x * dt; p.z += v.z * dt; p.y += v.y * dt;
+      const mo = this.mvVel;
+      p.x += (v.x + mo.x) * dt; p.z += (v.z + mo.z) * dt; p.y += (v.y + mo.y) * dt;
       this._collide();
       // the halfpipe's walls: never over the top while riding it
       if (onSlide) {
@@ -968,6 +986,13 @@ export class Player {
     const C = 0.62 * airPose;
     body.position.set(sideSway, bob + crouch + 0.3 * this.collapse + breathe + C * (1 - Math.cos(this.lean)), -C * Math.sin(this.lean));
     body.rotation.set(this.lean + Math.sin(ph * 2) * 0.03 * sa, Math.sin(ph) * 0.07 * sa, this.roll + 1.4 * this.collapse);
+    // maneuvers: the whole traveler turns about its middle
+    if (!this.mv && this.mvQuat.w < 0.9999 && this.mvQuat.w > -0.9999) this.mvQuat.slerp(_mvQI, exp(12, dt));
+    else if (!this.mv) this.mvQuat.identity();
+    this.mvK += ((this.mv ? 1 : 0) - this.mvK) * exp(8, dt);
+    this.model.quaternion.copy(this.mvQuat);
+    _mvP.set(0, MV_PIVOT, 0).applyQuaternion(this.mvQuat);
+    this.model.position.set(-_mvP.x, MV_PIVOT - _mvP.y, -_mvP.z);
     const sq = 1 + this.squash;
     body.scale.set((1 + this.sing * 0.035) / Math.sqrt(sq), (1 + this.sing * 0.035) * sq, (1 + this.sing * 0.035) / Math.sqrt(sq));
 
@@ -1040,7 +1065,7 @@ export class Player {
     su.uFlutter.value = clamp(0.25 + this.speed / 12 + this.flyK * 0.8 + wind * 0.4 + this.sing * 0.4, 0, 1.6);
     su.uStride.value = ph;
     su.uStrideAmt.value = sa * Math.min(1, this.speed / 5);
-    su.uFlare.value = (this.flyK * (this.flying ? 1 : 0.5) + Math.max(0, -this.squash) * 0.8) * (1 - this.diveK) + 0.3 * this.soarK;
+    su.uFlare.value = (this.flyK * (this.flying ? 1 : 0.5) + Math.max(0, -this.squash) * 0.8) * (1 - this.diveK) + 0.3 * this.soarK + (this.mv && this.mv.kind === 'twirl' ? 0.9 * this.mvAmp : 0);
     su.uSpread.value = clamp(this.glideK + this.soarK * 0.85, 0, 1) * (1 - this.diveK);
     su.uTuck.value = this.diveK;
 
@@ -1150,6 +1175,49 @@ export class Player {
     if (yb < terrainHeight(p.x + v.x * T, p.z + v.z * T) + 0.35) return false;
     v.y = Math.max(0, vy0) * 0.9;
     return true;
+  }
+
+  _startManeuver(kind, hAbove) {
+    const v = this.vel, hs = Math.hypot(v.x, v.z);
+    const a = hs > 0.8 ? Math.atan2(v.x, v.z) : this.heading;
+    let m;
+    if (kind === 'rollL' || kind === 'rollR') {
+      const spiral = this.mode === 'dive';      // a roll out of a dive winds into a corkscrew
+      m = { kind: 'roll', dir: kind === 'rollR' ? 1 : -1, dur: spiral ? 1.3 : 0.85, turns: spiral ? 2 : 1 };
+    } else if (kind === 'loop') {
+      if (hAbove < 4.5) return;
+      m = { kind: 'loop', dir: 1, dur: 1.5 };
+    } else if (kind === 'twirl') m = { kind: 'twirl', dir: 1, dur: 0.9 };
+    else return;
+    m.t = 0; m.fx = Math.sin(a); m.fz = Math.cos(a); m.hs = Math.max(hs, 8);
+    this.mv = m;
+    this.events.push({ type: 'maneuver', kind: m.kind, dir: m.dir });
+  }
+
+  /** Advance the running maneuver: sets this.mvQuat (the pose) and this.mvVel (how it bends the flight path). */
+  _maneuver(dt, hAbove) {
+    const m = this.mv, o = this.mvVel;
+    o.set(0, 0, 0); this.mvAmp = 0;
+    if (!m) return;
+    if (this.grounded || hAbove < 0.9) { this.mv = null; return; }   // landed mid-trick: the pose eases back on its own
+    m.t += dt;
+    const u = Math.min(1, m.t / m.dur), s = Math.sin(Math.PI * u), sm = u * u * (3 - 2 * u);
+    this.mvAmp = s;
+    if (m.kind === 'roll') {
+      // a barrel roll slides you sideways and down, the way a glider sheds height
+      const lat = m.dir * 11 * s / m.turns ** 0.5;
+      o.set(-m.fz * lat, -4 * s / m.turns ** 0.5, m.fx * lat);
+      this.mvQuat.setFromAxisAngle(_MVZ, m.dir * Math.PI * 2 * m.turns * sm);
+    } else if (m.kind === 'loop') {
+      // the velocity vector turns with the nose: up, over the top, and back down to where you started (mostly)
+      const phi = Math.PI * 2 * u, fw = m.hs * (Math.cos(phi) - 1) * 0.75;
+      o.set(m.fx * fw, m.hs * Math.sin(phi), m.fz * fw);
+      this.mvQuat.setFromAxisAngle(_MVX, -phi);
+    } else {
+      o.y = 3.2 * s;
+      this.mvQuat.setFromAxisAngle(_MVY, m.dir * Math.PI * 2 * sm);
+    }
+    if (u >= 1) { this.mv = null; this.mvQuat.identity(); o.set(0, 0, 0); this.mvAmp = 0; }
   }
 
   /** Pull out of a dive: the vertical speed swings round into forward speed and a short rising arc. */

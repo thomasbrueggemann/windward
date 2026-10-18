@@ -743,6 +743,9 @@ function frame(nowMs, doRender = true) {
     if (upd && upd.dist < 45 && game.hints.controls) showHint('updraft', 'A column of wind. Glide or walk into it and let it carry you up.', 7000);
     if (!player.grounded && player.charge < 0.02 && game.hints.controls) showHint('glide', input.isTouch ? 'Tap <b>GLIDE</b> to spread your robe · hold <b>DIVE</b> to plunge, release near the ground to swoop.' : 'Press <b>C</b> to glide · hold <b>shift</b> to dive, release near the ground to swoop.', 8000);
 
+    if (player.mode === 'glide' && player.glideK > 0.9) game.glideT = (game.glideT || 0) + dt; else if (player.grounded) game.glideT = 0;
+    if (game.glideT > 5 && game.hints.controls) showHint('maneuver', input.isTouch ? 'Tap <b>ROLL</b> or <b>LOOP</b> in the air.' : 'In the air: <b>Z</b> / <b>X</b> barrel roll · <b>R</b> loop · <b>V</b> twirl.', 7000);
+
     const speedN = clamp(player.speed / 20, 0, 1);
     audio.update(dt, {
       progress: prog, snow: env.pal.snow, speed: player.speed, surfing: player.surfing, flying: player.flying,

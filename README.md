@@ -17,10 +17,11 @@ npm run dev        # http://localhost:5173
 | **Space** | jump; hold to fly (flutter upward) on the scarf's glowing charge; with an empty scarf, holding it glides |
 | **C** (or **G**) | toggle **glide** while airborne: robe spread, slow sink, fast forward flight, banked turns; costs no charge |
 | **Shift** (hold) | **dive**: tuck and plunge, trading height for speed; let go (or skim the ground) to pull out into a swoop |
+| **Z / X** · **R** · **V** | aerial maneuvers (airborne, ≥3 m up): barrel roll left / right (a sideways slide that sheds height; out of a dive it winds into a two-turn corkscrew), loop (up, over and back down), twirl (a pirouette with the robe flared). Chain them freely; companions join in |
 | **E / Q / right-click** | sing; hold and release for a long call that carries much further |
 | **Esc / P** | pause menu: look sensitivity, invert Y, volume (saved per browser) |
-| Gamepad | left stick walk, right stick look, A / RT fly, LB / Y glide, RB dive, X / B / LT sing, Start pause |
-| Touch | left half joystick, right half look, on-screen FLY / GLIDE / DIVE / SING |
+| Gamepad | left stick walk, right stick look, A / RT fly, LB / Y glide, RB dive, X / B / LT sing, Start pause, d-pad ← / → roll, ↑ loop, ↓ twirl |
+| Touch | left half joystick, right half look, on-screen FLY / GLIDE / DIVE / SING / ROLL (toward the stick) / LOOP |
 
 Walk toward the glowing split in the mountain. Steep dunes turn walking into **sand-surfing**; you can still
 trudge up them slowly. Follow the pillars of light to the symbols that lengthen your scarf.

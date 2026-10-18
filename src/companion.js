@@ -41,9 +41,10 @@ export class Companion {
     this.state = 'hidden';
     this.spot = null;
     this.met = false;
-    this.inp = { mx: 0, my: 0, jump: false, jumpPressed: false, sing: false, dive: false, glide: false, glidePressed: false };
+    this.inp = { mx: 0, my: 0, jump: false, jumpPressed: false, sing: false, dive: false, glide: false, glidePressed: false, maneuver: null };
     this.side = index % 2 ? -1 : 1;
     this.stuckT = 0; this.flyHold = 0; this.singHold = 0;
+    this.mvDelay = 0; this.mvKind = null;
     this.replyT = -1; this.replyBig = false; this.replyDepth = 0;
     this.callT = 3 + Math.random() * 6;
     this.lastPlayerSing = false; this.playerSingT = 0;
@@ -126,7 +127,10 @@ export class Companion {
     inp.mx = inp.my = 0; inp.jumpPressed = false; inp.jump = false; inp.sing = false;
     const st = this.state;
     const sitting = st === 'waiting' || st === 'resting';
-    inp.dive = false; inp.glidePressed = false;
+    inp.dive = false; inp.glidePressed = false; inp.maneuver = null;
+    // join in when the player shows off, a beat later and not every time
+    if (this.mvDelay > 0) { this.mvDelay -= dt; if (this.mvDelay <= 0) inp.maneuver = this.mvKind; }
+    else for (const e of player.events) if (e.type === 'maneuver' && !c.grounded && Math.random() < 0.6) { this.mvDelay = this.react + 0.15 + Math.random() * 0.5; this.mvKind = e.kind === 'roll' ? (e.dir > 0 ? 'rollR' : 'rollL') : e.kind; }
     // mirror the player's flight: spread the robe while they glide or soar
     this.pGlideT = (player.mode === 'glide' || player.mode === 'soar') ? this.pGlideT + dt : 0;
     inp.glide = !c.grounded && (this.pGlideT > this.react || (c.charge < 0.05 && c.vel.y < 0));

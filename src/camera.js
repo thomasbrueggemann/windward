@@ -156,7 +156,7 @@ export class ChaseCamera {
     // a dive rattles the view a little, faster = more (never with reduced motion)
     if (dive > 0.05 && !this.calm) this.shake = Math.max(this.shake, dive * 0.32 * clamp((Math.hypot(speed, player.vel.y) - 12) / 24, 0, 1));
 
-    let wantFov = (extra.fov ?? 58) + glide * 7 + (this.calm ? 0 : Math.min(14, speed * 0.45) + (player.flying ? 3 : 0)
+    let wantFov = (extra.fov ?? 58) + (player.mvK || 0) * 4 + glide * 7 + (this.calm ? 0 : Math.min(14, speed * 0.45) + (player.flying ? 3 : 0)
       + dive * clamp(-player.vel.y * 0.35, 0, 12) + swoop * 6 + slide * clamp((speed - 16) * 0.5, 0, 5));
     // portrait screens: widen the vertical FOV so at least ~56 degrees stay visible horizontally
     const asp = cam.aspect;

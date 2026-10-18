@@ -22,6 +22,15 @@ export function flightFx(who, fx, audio, cam, dt, { listener = true } = {}) {
         }
         break;
       }
+      case 'maneuver': {
+        if (listener) { if (audio.maneuver) audio.maneuver(e.kind); cam.shake = Math.max(cam.shake, 0.06); }
+        // a burst of motes flung from the spread robe
+        for (let i = 0; i < 16; i++) {
+          const a = Math.random() * Math.PI * 2, s = 1 + Math.random() * 2.5;
+          sp.emit(p.x + Math.cos(a) * 0.6, p.y + 0.9 + Math.sin(a) * 0.6, p.z + Math.sin(a * 1.3) * 0.6, Math.cos(a) * s, Math.sin(a) * s, (Math.random() - .5) * s, 0.8, 0.09, 3, 2.3, 1.2, 0.9, 1, 0, -0.3);
+        }
+        break;
+      }
       case 'ribbon': {
         if (listener && audio.ribbon) audio.ribbon();
         // a thread of light from the creature to the traveler
@@ -47,6 +56,14 @@ export function flightFx(who, fx, audio, cam, dt, { listener = true } = {}) {
     for (let i = 0; i < n; i++) {
       const a = who.scarf.pts[1 + ((Math.random() * (who.scarf.n - 1)) | 0)];
       sp.emit(a.x, a.y, a.z, (Math.random() - .5) * .3, (Math.random() - .5) * .3, (Math.random() - .5) * .3, 0.9, 0.13 * who.boostT + 0.04, 3, 2.2, 1.1, 1, 2, 0, -0.5);
+    }
+  }
+  // maneuver: a ribbon of light spun off the scarf
+  if (who.mv) {
+    const n = Math.ceil(dt * 60);
+    for (let i = 0; i < n; i++) {
+      const a = who.scarf.pts[1 + ((Math.random() * (who.scarf.n - 1)) | 0)];
+      sp.emit(a.x, a.y, a.z, (Math.random() - .5) * .4, (Math.random() - .5) * .4, (Math.random() - .5) * .4, 0.7, 0.1, 3, 2.3, 1.2, 0.9, 1.5, 0, -0.4);
     }
   }
   // dive: wind streaks rushing past the traveler
