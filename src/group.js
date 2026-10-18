@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { rngFor, range } from './world/seed.js';
 import { Companion } from './companion.js';
-import { pathX, progressAt, zAtProgress, terrainHeight, trenchAmount, clamp, smooth } from './world/heightfield.js';
+import { pathX, progressAt, zAtProgress, terrainHeight, trenchAmount, clamp, smooth, SLIDES } from './world/heightfield.js';
 import { makeSoftDot } from './textures.js';
 
 /**
@@ -19,7 +19,8 @@ export const COMPANION_DEFS = [
   { scarf: [0.42, 0.11, 0.07], glyphs: 9, personality: { pace: 0.8, chatty: 0.2, wander: 0.15, curiosity: 0.6 } },     // long scarf, quiet and steady
 ];
 const _ar = rngFor('companions');
-const APPEAR_PROGRESS = [0.085, 0.345, 0.545, 0.795].map((p) => p + range(_ar, -0.012, 0.012));   // a little different every world
+const APPEAR_PROGRESS = [0.085, 0.345, 0.545, 0.795].map((p) => p + range(_ar, -0.012, 0.012))   // a little different every world
+  .map((p) => { for (const s of SLIDES) if (Math.abs(p - s.p) < 0.013) p = s.p + 0.013; return p; });   // never waiting on a slide
 
 /**
  * Where the travelers wait to be met: a high, clear spot (a crest, or beside a ruin) near each chapter's progress.
@@ -260,6 +261,8 @@ export class Group {
       const cs = Math.cos(ang), sn = Math.sin(ang);
       const dx = gx * cs - gz * sn, dz = gx * sn + gz * cs;
       c.slot.set(pp.x + dx * lead - dz * lat, 0, pp.z + dz * lead + dx * lat);
+      // on a long slide the formation rides the course itself (slides.js supplies the slot)
+      if (this.slotFn) this.slotFn(c, k, N, player, c.slot);
       // separation (no overlaps) + a little alignment with the group's heading
       const st = c.steer.set(0, 0, 0);
       const sepR = 2.4 - 0.6 * hud;

@@ -69,20 +69,21 @@ export class ChaseCamera {
     const speed = player.speed;
     // flight modes (0..1 blends; companions and older callers may not have them)
     const glide = (player.glideK || 0) + 0.8 * (player.soarK || 0), dive = player.diveK || 0, swoop = player.swoopK || 0;
-    if (!extra.noFollow && this.idle > 1.0 && speed > 1.2) {
+    const slide = player.slideK || 0;     // riding a long slide: the camera swings in behind quicker and leans with the course
+    if (!extra.noFollow && this.idle > 1.0 - 0.7 * slide && speed > 1.2) {
       const target = player.heading + Math.PI;
       let d = target - this.yaw; d = Math.atan2(Math.sin(d), Math.cos(d));
       // don't swing round when the traveler walks toward the camera
       const facingCam = Math.abs(d) > 2.4 ? 0.15 : 1;
-      this.yaw += d * exp(0.9 * Math.min(1, speed / 6) * facingCam, dt);
+      this.yaw += d * exp((0.9 + 1.5 * slide) * Math.min(1, speed / 6) * facingCam, dt);
     }
     if (this.idle > 2.0) {
-      const rp = this.restPitch + (player.flying ? 0.14 : 0) + (player.surfing ? -0.05 : 0) + glide * 0.06 + dive * 0.22;
+      const rp = this.restPitch + (player.flying ? 0.14 : 0) + (player.surfing ? -0.05 : 0) + glide * 0.06 + dive * 0.22 + slide * 0.08;
       this.pitch += (rp - this.pitch) * exp(0.7, dt);
     }
 
     // glide pulls well back to show the landscape; a dive tucks in slightly so the plunge feels close
-    const wantDist = (extra.dist ?? this.baseDist) + Math.min(4.5, speed * 0.15) + (player.flying ? 2.4 : 0) + glide * 4.0 - dive * 1.5;
+    const wantDist = (extra.dist ?? this.baseDist) + Math.min(4.5, speed * 0.15) + (player.flying ? 2.4 : 0) + glide * 4.0 * (1 - 0.6 * slide) - dive * 1.5 + slide * 1.2;
     this.dist += (wantDist - this.dist) * exp(2, dt);
 
     // focus point: the traveler, led slightly in the direction of travel; vertical motion is softened so jumps
@@ -144,13 +145,19 @@ export class ChaseCamera {
     // a slight roll into fast carves
     if ((player.surfing || player.flying || glide > 0.05) && !this.calm) {
       const rollMax = 0.06 + 0.05 * Math.min(1, glide);
-      cam.rotateZ(clamp(-player.turnRate * (0.04 + 0.03 * Math.min(1, glide)), -rollMax, rollMax) * Math.min(1, speed / 12));
+      cam.rotateZ(clamp(-player.turnRate * (0.04 + 0.03 * Math.min(1, glide) + 0.03 * slide), -rollMax - 0.04 * slide, rollMax + 0.04 * slide) * Math.min(1, speed / 12));
+    }
+    // riding up a halfpipe wall tilts the horizon with it
+    if (slide > 0.01 && !this.calm && player.slideW) {
+      const wall = clamp((Math.abs(player.slideD) - player.slideFw) / Math.max(1, player.slideW - player.slideFw), 0, 1);
+      this._bank = (this._bank || 0) + (Math.sign(player.slideD) * wall * 0.07 * slide - (this._bank || 0)) * exp(4, dt);
+      cam.rotateZ(this._bank);
     }
     // a dive rattles the view a little, faster = more (never with reduced motion)
     if (dive > 0.05 && !this.calm) this.shake = Math.max(this.shake, dive * 0.32 * clamp((Math.hypot(speed, player.vel.y) - 12) / 24, 0, 1));
 
     let wantFov = (extra.fov ?? 58) + glide * 7 + (this.calm ? 0 : Math.min(14, speed * 0.45) + (player.flying ? 3 : 0)
-      + dive * clamp(-player.vel.y * 0.35, 0, 12) + swoop * 6);
+      + dive * clamp(-player.vel.y * 0.35, 0, 12) + swoop * 6 + slide * clamp((speed - 16) * 0.5, 0, 5));
     // portrait screens: widen the vertical FOV so at least ~56 degrees stay visible horizontally
     const asp = cam.aspect;
     if (asp < 1.35) {

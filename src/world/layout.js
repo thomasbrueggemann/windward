@@ -1,7 +1,7 @@
 // The seeded plan of the pilgrimage: where each chapter's set pieces go (in progress along the path), plus a
 // registry of the sites actually built, so later features (interiors, passages) can build on the same layout.
 import { rngFor, range, sign, shuffle } from './seed.js';
-import { pathX, zAtProgress, progressAt } from './heightfield.js';
+import { pathX, zAtProgress, progressAt, SLIDES, PATH_LEN, slideClearance } from './heightfield.js';
 
 /** Chapter spans in progress (the colour script and chapter titles key off the same numbers). */
 export const CHAPTER_SPANS = [
@@ -50,6 +50,16 @@ export const PLAN = (() => {
   const flyers = [];
   for (let p = 0.09 + range(r, 0, 0.03); p < 0.92; p += range(r, 0.055, 0.095)) flyers.push({ p, side: range(r, -18, 18), n: 2 + ((r() * 3) | 0) });
   const gateway = { z: -range(r, 46, 60), dx: sign(r) * range(r, 10, 24), rot: range(r, -0.2, 0.2) };   // off to one side: the summit stays in view
+  // the long slides (heightfield.js) sit between set pieces: the first shrine stays clear of the great dune's lip,
+  // the city's first plaza leaves room for its runout, the bridge (passages.js) fits before the golden descent
+  const m = (x) => x / PATH_LEN;
+  const [dune, gold] = SLIDES;
+  if (dune) {
+    shrines[0].p = Math.min(shrines[0].p, dune.p - m(36));
+    plazas[0].p = Math.max(plazas[0].p, dune.p + m(85));
+  }
+  if (gold) shrines[1].p = Math.min(shrines[1].p, gold.p - m(78));
+  guardians[0] = plazas[1].p;
   return { plazas, shrines, guardians, glyphs, banners, flyers, gateway };
 })();
 
@@ -73,6 +83,7 @@ export const occupy = (x, z, r) => { FOOTPRINTS.push({ x, z, r }); };
 /** Is a disc of radius `r` clear of every solid footprint (and, optionally, the path corridor)? */
 export function isFree(x, z, r, { corridor = true, pad = 2 } = {}) {
   if (corridor && Math.abs(x - pathX(z)) < r + CORRIDOR) return false;
+  if (slideClearance(x, z) < r + pad) return false;
   for (const f of FOOTPRINTS) if (Math.hypot(f.x - x, f.z - z) < f.r + r + pad) return false;
   return true;
 }
