@@ -14,10 +14,49 @@ import { weather, finish } from './stone.js';
 
 const ROCK_HIT = 0.5;            // body radius (m) added to a rock's
 // Dune-sized and unhurried: a long swelling rumble, a slow rise, a long look around, a slow sinking away
-const WORM_RUMBLE = 2.4, WORM_ERUPT = 2.0, WORM_UP = 4.5, WORM_RETREAT = 3.2, WORM_SCALE = 1.7, WORM_DRIFT = 0.9;
-const M = 16, NB = 28, NR = NB + 5;      // radial segments, body rings, total rings (body + 5 mouth rings)
-const BASE = [0.6, 0.4, 0.24], RIB = [0.82, 0.64, 0.42], INSIDE = [0.42, 0.07, 0.06], IVORY = [0.95, 0.9, 0.78];
-const _c = {}, _tg = new THREE.Vector3(), _e1 = new THREE.Vector3(), _e2 = new THREE.Vector3(), _L = new THREE.Vector3(), _a = new THREE.Vector3(), _b = new THREE.Vector3();
+const WORM_RUMBLE = 2.4, WORM_ERUPT = 2.0, WORM_UP = 4.5, WORM_RETREAT = 3.2, WORM_SCALE = 2.6, WORM_DRIFT = 0.9;
+// rings: radial segments, body rings, mouth rings (rim, then a funnel down to the throat)
+const M = 28, NB = 40;
+const MOUTH = [[0.12, 1.05], [0.12, 0.93], [-0.26, 0.85], [-0.48, 0.7], [-0.66, 0.55], [-0.8, 0.4], [-0.89, 0.25], [-0.94, 0.12], [-0.95, 0.02]];   // [depth, radius] in units of the head radius
+const NR = NB + MOUTH.length;
+const SKIN = [0.46, 0.34, 0.21], PLATE = [0.68, 0.53, 0.35], RIM = [0.6, 0.46, 0.3], THROAT = [0.2, 0.09, 0.05];
+const TOOTH = [0.9, 0.76, 0.52];
+const _c = {}, _tg = new THREE.Vector3(), _e1 = new THREE.Vector3(), _e2 = new THREE.Vector3(), _L = new THREE.Vector3(), _a = new THREE.Vector3(), _m = new THREE.Matrix4();
+
+/**
+ * The inside of the mouth: hundreds of long thin teeth lying in rings over the funnel, every one pointing in toward
+ * the dark throat, so the whole maw reads as a burst of needles. One shared geometry in head units (z = out of the
+ * mouth, radius 1 = the rim); each worm places it on its head.
+ */
+let _teeth = null;
+function teethMesh() {
+  if (_teeth) return _teeth;
+  const r = rngFor('worm-teeth'), pos = [];
+  const depth = (f) => -0.95 * (1 - f * f);
+  for (let f = 0.93; f > 0.17; f -= 0.052) {
+    const n = Math.round(f * 74);
+    for (let k = 0; k < n; k++) {
+      const an = (k + r() * 0.8) / n * Math.PI * 2, ca = Math.cos(an), sa = Math.sin(an);
+      const fb = f + (r() - 0.5) * 0.02, zb = depth(fb) + 0.02, rb = fb;
+      const L = (0.2 + 0.2 * r()) * (0.5 + 0.7 * fb), tilt = 0.2 + 0.2 * r();
+      // direction: inward along the radius, slightly out of the mouth, with a little scatter
+      let dx = -ca + (r() - 0.5) * 0.2, dy = -sa + (r() - 0.5) * 0.2, dz = tilt;
+      const dl = Math.hypot(dx, dy, dz); dx /= dl; dy /= dl; dz /= dl;
+      const bx = ca * rb, by = sa * rb, w = 0.016 + 0.01 * r();
+      // a thin three-sided spike: base triangle perpendicular to the direction, apex at the tip
+      const px = -sa, py = ca;                               // a vector perpendicular to the radial direction in the mouth plane
+      const q1 = [px * w, py * w, 0], q2 = [-px * w * 0.5 + ca * w * 0.9, -py * w * 0.5 + sa * w * 0.9, w * 0.5], q3 = [-px * w * 0.5 - ca * w * 0.9, -py * w * 0.5 - sa * w * 0.9, -w * 0.5];
+      const A = [bx + q1[0], by + q1[1], zb + q1[2]], B = [bx + q2[0], by + q2[1], zb + q2[2]], C = [bx + q3[0], by + q3[1], zb + q3[2]], T = [bx + dx * L, by + dy * L, zb + dz * L];
+      pos.push(...A, ...B, ...T, ...B, ...C, ...T, ...C, ...A, ...T);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.computeVertexNormals();
+  g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e5);
+  const m = new THREE.MeshStandardMaterial({ color: new THREE.Color(...TOOTH), roughness: 0.75, emissive: 0x4a2c12, emissiveIntensity: 0.6, side: THREE.DoubleSide });
+  return (_teeth = { g, m });
+}
 
 class Worm {
   constructor(scene, mat, d, s) {
@@ -25,6 +64,7 @@ class Worm {
     this.lat = 0; this.x = 0; this.y = 0; this.z = 0; this.tx = 0; this.tz = 1; this.nx = 1; this.nz = 0;
     const nv = NR * M;
     this.pos = new Float32Array(nv * 3); this.nrm = new Float32Array(nv * 3); this.col = new Float32Array(nv * 3);
+    this.jit = new Float32Array(nv);                      // fixed roughness of the skin
     const idx = [];
     for (let i = 0; i < NR - 1; i++) for (let j = 0; j < M; j++) {
       const a = i * M + j, b = i * M + (j + 1) % M, c = (i + 1) * M + j, e = (i + 1) * M + (j + 1) % M;
@@ -40,12 +80,20 @@ class Worm {
     this.mesh = new THREE.Mesh(g, mat);
     this.mesh.frustumCulled = false; this.mesh.visible = false;
     scene.add(this.mesh);
+    const T = teethMesh();
+    this.teeth = new THREE.Mesh(T.g, T.m); this.teeth.frustumCulled = false; this.teeth.visible = false;
+    scene.add(this.teeth);
     this.pts = new Float32Array(NB * 3); this.rad = new Float32Array(NB);
-    // colours never change: pale ribs along the body, ivory teeth, a dark red throat
-    const col = this.col, put = (i, j, c) => { const o = (i * M + j) * 3; col[o] = c[0]; col[o + 1] = c[1]; col[o + 2] = c[2]; };
+    // colours and roughness never change: armoured plates ringing the body, pale rim, dark throat
+    const col = this.col, put = (i, j, c, k = 1) => { const o = (i * M + j) * 3; col[o] = c[0] * k; col[o + 1] = c[1] * k; col[o + 2] = c[2] * k; };
     const mix = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
-    for (let i = 0; i < NB; i++) for (let j = 0; j < M; j++) put(i, j, mix(BASE, RIB, 0.5 + 0.5 * Math.sin(i * 2.1) - (j > M * 0.5 ? 0.12 : 0)));
-    for (let j = 0; j < M; j++) { put(NB, j, j & 1 ? IVORY : BASE); put(NB + 1, j, mix(INSIDE, BASE, 0.3)); put(NB + 2, j, INSIDE); put(NB + 3, j, mix(INSIDE, [0.1, 0.01, 0.01], 0.6)); put(NB + 4, j, [0.05, 0.005, 0.005]); }
+    for (let i = 0; i < NR; i++) for (let j = 0; j < M; j++) this.jit[i * M + j] = 0.955 + Math.random() * 0.09;
+    for (let i = 0; i < NB; i++) for (let j = 0; j < M; j++) put(i, j, mix(SKIN, PLATE, clamp(0.5 + 0.55 * Math.sin(i * 1.7) + (Math.random() - 0.5) * 0.5, 0, 1)), 0.88 + Math.random() * 0.24);
+    for (let q = 0; q < MOUTH.length; q++) for (let j = 0; j < M; j++) {
+      const i = NB + q;
+      if (q < 2) put(i, j, RIM, 0.9 + Math.random() * 0.2);
+      else put(i, j, mix([0.45, 0.28, 0.15], THROAT, (q - 2) / (MOUTH.length - 3)));
+    }
   }
 
   /** The worm will come up at (s, lat) on the course. */
@@ -53,7 +101,7 @@ class Worm {
     const P = coursePoint(this.d, this.s, lat, _c);
     this.lat = lat; this.x = P.x; this.z = P.z; this.tx = P.tx; this.tz = P.tz; this.nx = -P.tz; this.nz = P.tx;
     this.y = terrainHeight(P.x, P.z);
-    this.dir = lat > 0 ? -1 : 1; this.reach = tab(this.d.Ft, this.s) + 3;
+    this.dir = lat > 0 ? -1 : 1; this.reach = tab(this.d.Ft, this.s) + 2;
     this.state = 'rumble'; this.t = 0; this.ext = 0; this.mesh.visible = true; this.lastHit = new WeakMap();
     this.pose(0);
   }
@@ -71,55 +119,66 @@ class Worm {
   /** Shape the spine for the current extension and write the rings. */
   pose(time) {
     const e = this.ext;
-    // a low, long body: the tail stays under the sand behind it, the back humps out of it and the head skims along just
-    // above the surface, facing the rider with its maw wide open
-    const sway = Math.sin(time * 0.45 + this.ph) * 1.6 * e;
-    const p1a = 5, p1y = -4 + 5.5 * e, p2a = 1.5 * e, p2y = -1.5 + 2.3 * e, ha = -3.5 * e + Math.sin(time * 0.7 + this.ph) * 0.4 * e, hy = -1.5 + 2.5 * e;
+    // a huge, low body: the tail stays under the sand behind it, the back humps out of it and the blunt head skims along
+    // just above the surface, its round maw facing the rider
+    const sway = Math.sin(time * 0.45 + this.ph) * 1.2 * e;
+    const p1a = 5, p1y = -4 + 5.5 * e, p2a = 1.5 * e, p2y = -1.5 + 2.3 * e, ha = -3.5 * e + Math.sin(time * 0.7 + this.ph) * 0.4 * e, hy = -1.5 + 2.3 * e;
+    const S = WORM_SCALE;
     const at = (u, out) => {
       const w = 1 - u, b0 = w * w * w, b1 = 3 * w * w * u, b2 = 3 * w * u * u, b3 = u * u * u;
-      const S = WORM_SCALE, a = (b0 * 8 + b1 * p1a + b2 * p2a + b3 * ha) * S;
+      const a = (b0 * 8 + b1 * p1a + b2 * p2a + b3 * ha) * S;
       const y = (b0 * -4 + b1 * p1y + b2 * p2y + b3 * hy + 0.3 * e * Math.sin(u * 11 - time * 1.0) * smooth(0.1, 0.5, u)) * S, l = sway * u * u * S;
       return out.set(this.x + this.tx * a + this.nx * l, this.y + y, this.z + this.tz * a + this.nz * l);
     };
-    const P = this.pts, R = this.rad, pos = this.pos, nrm = this.nrm;
+    const P = this.pts, R = this.rad, pos = this.pos, nrm = this.nrm, jit = this.jit;
     for (let i = 0; i < NB; i++) {
       const u = i / (NB - 1) * 0.97;
       at(u, _a); P[i * 3] = _a.x; P[i * 3 + 1] = _a.y; P[i * 3 + 2] = _a.z;
-      R[i] = (1.2 - 0.25 * smooth(0.1, 0.9, u)) * WORM_SCALE * (1 + 0.05 * Math.sin(i * 1.7 - time * 0.9));
+      // a thick body that swells slightly toward a blunt head; plates ring it
+      R[i] = (1.05 - 0.15 * smooth(0.1, 0.6, u) + 0.2 * smooth(0.8, 1, u)) * S * (1 + 0.07 * Math.sin(i * 1.7 - time * 0.5));
     }
     _L.set(this.nx, 0, this.nz);
-    const ring = (i, cx, cy, cz, tgx, tgy, tgz, r, tooth = 0) => {
+    // ring i of M points around (cx, cy, cz), perpendicular to t, radius r (each point roughened by its fixed jitter)
+    const frame = (tgx, tgy, tgz) => {
       _tg.set(tgx, tgy, tgz).normalize();
       _e1.copy(_L).addScaledVector(_tg, -_L.dot(_tg)).normalize();
       _e2.crossVectors(_tg, _e1);
+    };
+    const ring = (i, cx, cy, cz, r, rough = 1, push = 0) => {
       for (let j = 0; j < M; j++) {
         const an = j / M * Math.PI * 2, ca = Math.cos(an), sa = Math.sin(an);
         const dx = _e1.x * ca + _e2.x * sa, dy = _e1.y * ca + _e2.y * sa, dz = _e1.z * ca + _e2.z * sa;
-        const odd = tooth && (j & 1), rr = odd ? r * 0.8 : r, f = odd ? tooth : 0;
-        const o = (i * M + j) * 3;
-        pos[o] = cx + dx * rr + _tg.x * f; pos[o + 1] = cy + dy * rr + _tg.y * f; pos[o + 2] = cz + dz * rr + _tg.z * f;
+        const rr = r * (1 + (jit[i * M + j] - 1) * rough), o = (i * M + j) * 3;
+        pos[o] = cx + dx * rr + _tg.x * push; pos[o + 1] = cy + dy * rr + _tg.y * push; pos[o + 2] = cz + dz * rr + _tg.z * push;
         nrm[o] = dx; nrm[o + 1] = dy; nrm[o + 2] = dz;
       }
     };
     for (let i = 0; i < NB; i++) {
       const a = Math.max(0, i - 1), b = Math.min(NB - 1, i + 1);
-      ring(i, P[i * 3], P[i * 3 + 1], P[i * 3 + 2], P[b * 3] - P[a * 3], P[b * 3 + 1] - P[a * 3 + 1], P[b * 3 + 2] - P[a * 3 + 2], R[i]);
+      frame(P[b * 3] - P[a * 3], P[b * 3 + 1] - P[a * 3 + 1], P[b * 3 + 2] - P[a * 3 + 2]);
+      ring(i, P[i * 3], P[i * 3 + 1], P[i * 3 + 2], R[i]);
     }
-    // the maw: a flared lip with teeth, then a throat narrowing along the same line
-    const k = NB - 1, tx = P[k * 3] - P[(k - 1) * 3], ty = P[k * 3 + 1] - P[(k - 1) * 3 + 1], tz = P[k * 3 + 2] - P[(k - 1) * 3 + 2];
-    const tl = Math.hypot(tx, ty, tz) || 1, ux = tx / tl, uy = ty / tl, uz = tz / tl;
-    const cx = P[k * 3], cy = P[k * 3 + 1], cz = P[k * 3 + 2];
-    [[0.4, 1.8, 0.8], [0.7, 1.45, 0], [1.5, 1.0, 0], [2.4, 0.5, 0], [3.1, 0.03, 0]].forEach(([d, r, tooth], q) => ring(NB + q, cx + ux * d * WORM_SCALE, cy + uy * d * WORM_SCALE, cz + uz * d * WORM_SCALE, tx, ty, tz, r * WORM_SCALE, tooth * WORM_SCALE));
+    // the maw: a thick rolled rim, then a funnel down to the dark throat (depth is back along the body)
+    const k = NB - 1;
+    frame(P[k * 3] - P[(k - 1) * 3], P[k * 3 + 1] - P[(k - 1) * 3 + 1], P[k * 3 + 2] - P[(k - 1) * 3 + 2]);
+    const cx = P[k * 3], cy = P[k * 3 + 1], cz = P[k * 3 + 2], Rh = R[k];
+    MOUTH.forEach(([depth, f], q) => ring(NB + q, cx + _tg.x * depth * Rh, cy + _tg.y * depth * Rh, cz + _tg.z * depth * Rh, f * Rh, q < 2 ? 1.6 : 0.3));
     this.geo.attributes.position.needsUpdate = true; this.geo.attributes.normal.needsUpdate = true;
+    // the teeth ride on the head: x, y across the mouth, z out of it
+    _m.makeBasis(_e1, _e2, _tg);
+    this.teeth.position.set(cx, cy, cz); this.teeth.quaternion.setFromRotationMatrix(_m); this.teeth.scale.setScalar(Rh);
+    this.teeth.visible = this.mesh.visible;
   }
+
+  setVisible(v) { this.mesh.visible = v; this.teeth.visible = v; }
 
   /** Returns the horizontal push direction {nx, nz} if a body with its chest at (x, y, z) is inside the worm, else null. */
   hit(x, y, z) {
     const P = this.pts, R = this.rad;
-    for (let i = 4; i < NB; i++) {
+    for (let i = 6; i < NB; i++) {
       const py = P[i * 3 + 1];
       if (py < this.y - 0.3) continue;
-      const r = R[i] + (i === NB - 1 ? 0.6 : 0.5), dx = x - P[i * 3], dy = y - py, dz = z - P[i * 3 + 2];
+      const r = R[i] + 0.5, dx = x - P[i * 3], dy = y - py, dz = z - P[i * 3 + 2];
       if (dx * dx + dy * dy + dz * dz < r * r) {
         const l = Math.hypot(dx, dz);
         return l > 0.05 ? { nx: dx / l, nz: dz / l } : { nx: this.nx, nz: this.nz };
@@ -137,7 +196,7 @@ export class SlideHazards {
     this.rocks = []; this.worms = [];
     this._hitT = new WeakMap();
     const r = rngFor('slide-hazards');
-    const wormMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, emissive: 0x3a1c0c, emissiveIntensity: 0.55, side: THREE.DoubleSide });
+    const wormMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, emissive: 0x4a2c14, emissiveIntensity: 0.5, side: THREE.DoubleSide });
     for (const d of slides) {
       const nearKick = (s, pad = 16) => d.kicksS.some((k) => s > k - pad && s < k + pad + 12);
       // boulders: singly or in pairs with a gap between them, never on a kicker
@@ -268,7 +327,7 @@ export class SlideHazards {
           const a = Math.random() * 6.28;
           fx.dust.emit(w.x + Math.cos(a) * 1.2, w.y + 0.2, w.z + Math.sin(a) * 1.2, Math.cos(a) * 2, 1 + Math.random() * 2, Math.sin(a) * 2, 1, 0.5, sand.r, sand.g * 0.95, sand.b * 0.85, 0.4, 0.8, 2, 1);
         }
-        if (k >= 1) { w.state = 'spent'; w.mesh.visible = false; continue; }
+        if (k >= 1) { w.state = 'spent'; w.setVisible(false); continue; }
       }
       w.pose(time);
     }

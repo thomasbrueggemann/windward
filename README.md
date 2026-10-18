@@ -45,7 +45,7 @@ All flight is fed by the scarf: symbols lengthen it and so its charge.
 - **Slide hazards** (`src/world/slidehazards.js`): boulders sit in the floor and low walls of both long sand slides
   (steer round them or jump them; a hit costs speed, a short stun and a hop). Sandworms are Dune-sized and unhurried: the
   sand shakes and dust heaves for ~2.5 s to a deep rock-grinding rumble, then a worm slowly rises out of the sand facing you
-  right where you were heading — a low, long body skimming the surface with its toothed maw wide open (you can glide
+  right where you were heading — a huge, low, armoured body skimming the surface, a round maw wide open and bristling with hundreds of needle teeth around a dark throat (you can glide
   or jump over it) — ploughs sideways through the sand, and sinks back. Hit one and you are flung up and lose scarf charge. Companions get hit too; `?auto` steers round both.
 
 The camera pulls back and widens in a glide; a dive tucks it in with an FOV kick and slight shake (both off
