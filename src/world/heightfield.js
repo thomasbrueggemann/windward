@@ -1,5 +1,6 @@
 import { noise2 } from '../noise.js';
 import { rngFor, range, sign } from './seed.js';
+import { planSlides, placeSlides, makeCarve, courseXAtZ, slideNearest } from './slidecourse.js';
 
 const TAU = Math.PI * 2;
 
@@ -22,10 +23,20 @@ const W = (() => {
 })();
 export const WORLD_SHAPE = W;
 
-/** Length of the walkable pilgrimage (world units along -Z). */
+// The long sand slides (slidecourse.js) are inserted into the route: each adds its z-extent of ground at one point
+// of the progress scale, so everything placed by progress keeps its place and the slide is extra road.
+const SL = planSlides();
+/** The long slides of this world (course geometry, profile, pace; see slidecourse.js). */
+export const SLIDES = SL.list;
+for (const d of SLIDES) { d.zs = -(d.p * W.len + d.Ebefore); d.ze = d.zs - d.E; }
+const GOLD = SLIDES.find((d) => d.kind === 'gold');
+
+/** Metres per unit of progress outside the slides (the walkable pilgrimage without them). */
 export const PATH_LEN = W.len;
+/** Full z-length of the route including the inserted slides. */
+export const ROUTE_LEN = W.len + SL.E;
 /** The distant mountain every traveler is drawn to. */
-export const MOUNTAIN = { x: W.mx, z: -(W.len + W.mdz), H: W.mH, R: 1100 };
+export const MOUNTAIN = { x: W.mx, z: -(ROUTE_LEN + W.mdz), H: W.mH, R: 1100 };
 /** Prevailing wind (unit vector in XZ); dunes' steep lee faces point down-wind. */
 export const WIND = { x: Math.sin(W.wind), z: Math.cos(W.wind) };
 
@@ -33,8 +44,28 @@ export const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
 export const smooth = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
 export const lerp = (a, b, t) => a + (b - a) * t;
 
-export const progressAt = (z) => clamp(-z / PATH_LEN, 0, 1);
-export const zAtProgress = (p) => -p * PATH_LEN;
+/** Progress 0..1 along the route; constant across a slide's inserted ground. */
+export const progressAt = (z) => {
+  let d = -z;
+  for (const s of SLIDES) {
+    const a = s.p * PATH_LEN;          // d already has the earlier slides taken out
+    if (d < a) break;
+    if (d < a + s.E) return s.p;
+    d -= s.E;
+  }
+  return clamp(d / PATH_LEN, 0, 1);
+};
+/** z of progress p (a slide's insertion point maps to the slide's far end). */
+export const zAtProgress = (p) => {
+  let e = 0;
+  for (const s of SLIDES) if (p >= s.p) e += s.E;
+  return -(p * PATH_LEN + e);
+};
+/** The slide whose inserted ground contains z (or null). */
+export function slideSpanAt(z) {
+  for (const s of SLIDES) if (z <= s.zs && z >= s.ze) return s;
+  return null;
+}
 
 function basePath(z) {
   const p = progressAt(z);
@@ -46,6 +77,10 @@ const canyonWiggle = (z) => W.c1 * Math.sin(z * W.cf1 + W.cp1) + W.c2 * Math.sin
 
 /** Centre-line of the pilgrimage (it follows the canyon floor through the depths). */
 export function pathX(z) {
+  for (const s of SLIDES) if (s.ready && z <= s.zs && z >= s.ze) return courseXAtZ(s, z);
+  return pathXOrig(z);
+}
+function pathXOrig(z) {
   const p = progressAt(z);
   const inCanyon = smooth(0.49, 0.53, p) * (1 - smooth(0.76, 0.82, p));
   return basePath(z) + canyonWiggle(z) * inCanyon;
@@ -56,7 +91,32 @@ const skew = (ph) => Math.sin(ph - 0.55 * Math.sin(ph));
 
 function trenchEnv(z) {
   const p = progressAt(z);
-  return smooth(0.50, 0.545, p) * (1 - smooth(0.70, 0.79, p));
+  let a;
+  // the canyon opens along the golden slide: barely a dip before it, full depth below it
+  if (!GOLD) a = smooth(0.50, 0.545, p);
+  else if (z > GOLD.zs) a = 0.15 * smooth(0.50, GOLD.p, p);
+  else if (z > GOLD.ze) a = 0.15 + 0.85 * smooth(0.04, 0.85, (GOLD.zs - z) / GOLD.E);
+  else a = 1;
+  return a * (1 - smooth(0.70, 0.79, p));
+}
+
+/** Each slide drops the world beyond it (a lower basin the rest of the route sits in), ramping across its span. */
+function slideStep(z) {
+  let h = 0;
+  for (const s of SLIDES) if (s.D > 0 && z < s.zs) h += s.D * (z <= s.ze ? 1 : smooth(0, 1, (s.zs - z) / s.E));
+  return h;
+}
+
+/**
+ * Progress for the colour script. The city keeps its golden hour right up to the golden slide, which then carries
+ * the light down through dusk into the blue of the depths as you descend.
+ */
+export function paletteProgressAt(z) {
+  const p = progressAt(z);
+  if (!GOLD) return p;
+  if (z > GOLD.zs) return p <= 0.45 ? p : 0.45 + (p - 0.45) * (0.015 / (GOLD.p - 0.45));
+  if (z > GOLD.ze) return 0.465 + 0.1 * smooth(0, 1, (GOLD.zs - z) / GOLD.E);
+  return p >= 0.58 ? p : 0.565 + (p - GOLD.p) * (0.015 / (0.58 - GOLD.p));
 }
 function trenchCenter(z) { return basePath(z) + canyonWiggle(z); }
 export { trenchCenter };
@@ -146,7 +206,7 @@ function rawHeight(x, z, lod) {
   }
 
   h += mountainHeight(x, z);
-  return h;
+  return h - slideStep(z);
 }
 
 /** Steepest sustained uphill grade along the path centre (`win` m windows) between two progress values. */
@@ -183,6 +243,35 @@ export function setGroundOverride(fn) { groundOverride = fn; }
  */
 export const TERRAIN_MODS = [];
 export function addTerrainMod(m) { TERRAIN_MODS.push(m); return m; }
+// the slides' courses and troughs (before any other mod, so passages and ruins build on the carved ground)
+placeSlides(SL, { pathXOrig, rawHeight: (x, z) => rawHeight(x, z, false) });
+for (const d of SLIDES) {
+  const carve = makeCarve(d);
+  addTerrainMod({ ...d.box, fn: (x, z, h) => carve(x, z, h) });
+}
+const _sq = {};
+/** Nearest slide pass to (x, z) for gameplay ({slide, s, d, tx, tz, nx, nz, W, Fw, vT, ok}) or null. Shared object. */
+export function slideAt(x, z, out = _sq) { return slideNearest(SLIDES, x, z, out); }
+/** Clearance from the nearest slide trough edge (big when far): keeps built things off the courses. */
+export function slideClearance(x, z) {
+  const q = slideNearest(SLIDES, x, z, _sq2);
+  if (!q) return 1e9;
+  if (q.s < -10 || q.s > q.slide.Ls + 12) return Math.max(-q.s - 10, q.s - q.slide.Ls - 12, 0) + Math.abs(q.d);
+  return Math.abs(q.d) - q.W - 4;
+}
+const _sq2 = {};
+const _sq3 = {};
+/** For the sand shader: [s, d, mask, gold] of the slide under (x, z): course coordinates and how much is slide floor/wall. */
+export function slideFlow(x, z, out) {
+  out[0] = 0; out[1] = 0; out[2] = 0; out[3] = 0;
+  const q = slideNearest(SLIDES, x, z, _sq3);
+  if (!q) return out;
+  const d = q.slide;
+  const m = (1 - smooth(q.W - 1, q.W + 2, Math.abs(q.d))) * smooth(-2, 6, q.s) * (1 - smooth(d.Ls - 20, d.Ls + 10, q.s));
+  out[0] = q.s; out[1] = q.d; out[2] = m; out[3] = d.gold;
+  return out;
+}
+
 function applyMods(x, z, h, lod) {
   for (let i = 0; i < TERRAIN_MODS.length; i++) {
     const m = TERRAIN_MODS[i];

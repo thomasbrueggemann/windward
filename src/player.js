@@ -491,6 +491,7 @@ const DIVE_G = 22, DIVE_VMAX = 32, DIVE_HSPEED = 16;              // m/s², m/s,
 const SWOOP_MAX = 36;                                             // horizontal cap right after a pull-out
 const AIR_MAX = 36;
 const SOAR_RISE = 11;
+const SL_TURN = 2.2, SL_G = 13, SL_FLOW = 0.55, SL_MIN = 8.5, SL_MAX = 28;      // slide: carve rate, gravity along the course, pull to its pace
 const RIBBON_R = 4.5, RIBBON_BOOST = 8, RIBBON_CD = 6, RIBBON_MIN_SPEED = 5;
 
 const exp = (k, dt) => 1 - Math.exp(-k * dt);
@@ -536,6 +537,11 @@ export class Player {
     this.speedMul = 1;
     this.slip = 0;           // 0..1 ice underfoot: no grip, slides back down slopes (set by passages)
     this.rechargeMul = 1;    // scale of the scarf's slow refill on the ground (passages can stop it)
+    // long sand slides (set each frame by slides.js): 0..1 how much the course carries you, its direction, your
+    // offset across it (right = +), the halfpipe's half-width and flat floor, and the pace it carries you at
+    this.slide = 0; this.slideTx = 0; this.slideTz = -1; this.slideD = 0; this.slideW = 12; this.slideFw = 4.5; this.slideVT = 20;
+    this.slideK = 0;         // smoothed, for the camera and the pose
+    this.slideAirT = 0;
     this.phase = 0;          // walk cycle (radians; one footfall per PI)
     this.strideAmt = 0;      // 0..1 how much the legs are walking
     this.squash = 0; this.squashV = 0;
@@ -631,6 +637,8 @@ export class Player {
       const g = terrainGradient(p.x, p.z);
       const gx = g.x, gz = g.z, s = Math.hypot(gx, gz);
       surfAmt = smooth(0.27, 0.52, s);
+      const onSlide = this.slide > 0.3 && !this.scripted;
+      if (onSlide) surfAmt = 1;
       // ice: even gentle slopes slide; the feet find no grip to dig in
       const slip = this.slip;
       if (slip > 0) surfAmt = Math.max(surfAmt, slip * smooth(0.03, 0.3, s));
@@ -693,8 +701,13 @@ export class Player {
       this.boostCd = Math.max(0, this.boostCd - dt);
 
       // vertical
+      const slideAir = onSlide && !this.grounded && (mode === 'glide' || mode === 'fall');
+      this.slideAirT = slideAir ? this.slideAirT + dt : 0;
       if (!this.grounded) {
-        if (mode === 'flutter') {
+        if (slideAir) {
+          // a floaty hop off a kicker or roller: lighter than a fall, quicker than a glide so you come back to the sand
+          v.y -= GRAVITY * (v.y > 0 ? 0.8 : 0.7) * dt;
+        } else if (mode === 'flutter') {
           // rise in soft beats rather than a steady elevator
           const beat = 0.75 + 0.5 * Math.max(0, Math.sin(this._clock * 8.5));
           v.y += (FLUTTER_RISE - v.y) * exp(3.4 * beat, dt);
@@ -723,7 +736,9 @@ export class Player {
       }
 
       // horizontal
-      if (this.grounded) {
+      if (onSlide && (this.grounded || slideAir)) {
+        this._slidePhysics(dt, wx, wz, wishAmt, gx, gz, this.grounded);
+      } else if (this.grounded) {
         // pressing uphill digs in: the slope barely drags you back, so steep dunes are a slow trudge, not a wall
         const climb = (s > 1e-4 ? wishAmt * clamp((wx * gx + wz * gz) / s, 0, 1) : 0) * (1 - 0.85 * slip) * (1 - cliff);
         if (surfAmt > 0) {
@@ -792,8 +807,10 @@ export class Player {
       if (!this.grounded) this._ribbons(dt);
       const hs = Math.hypot(v.x, v.z);
       // the ground can't carry more than surfing speed; the air can, briefly, after a swoop or boost
-      if (this.grounded && hs > SURF_MAX) { const t = (SURF_MAX + (hs - SURF_MAX) * Math.exp(-4 * dt)) / hs; v.x *= t; v.z *= t; }
-      const cap = !this.grounded && this.swoopT <= 0 && this.boostT <= 0 && mode !== 'dive' ? SWOOP_MAX : AIR_MAX;
+      const gMax = onSlide ? SL_MAX : SURF_MAX;
+      if (this.grounded && hs > gMax) { const t = (gMax + (hs - gMax) * Math.exp(-4 * dt)) / hs; v.x *= t; v.z *= t; }
+      let cap = !this.grounded && this.swoopT <= 0 && this.boostT <= 0 && mode !== 'dive' ? SWOOP_MAX : AIR_MAX;
+      if (onSlide) cap = Math.min(cap, SL_MAX);
       if (hs > cap) { v.x *= cap / hs; v.z *= cap / hs; }
       this.speed = Math.min(hs, cap);
       if (mode === 'dive') this.stats.peakDive = Math.max(this.stats.peakDive, Math.hypot(hs, v.y));
@@ -802,6 +819,17 @@ export class Player {
       const prevY = p.y;
       p.x += v.x * dt; p.z += v.z * dt; p.y += v.y * dt;
       this._collide();
+      // the halfpipe's walls: never over the top while riding it
+      if (onSlide) {
+        const nx = -this.slideTz, nz = this.slideTx, dN = this.slideD + (v.x * nx + v.z * nz) * dt, lim = this.slideW - 0.4;
+        if (Math.abs(dN) > lim) {
+          const o = dN - Math.sign(dN) * lim;
+          p.x -= nx * o; p.z -= nz * o;
+          const vn = v.x * nx + v.z * nz;
+          if (vn * Math.sign(dN) > 0) { v.x -= nx * vn; v.z -= nz * vn; }
+          this.slideD = Math.sign(dN) * lim;
+        } else this.slideD = dN;
+      }
 
       const gy = terrainHeight(p.x, p.z);
       if (this.grounded) {
@@ -810,7 +838,11 @@ export class Player {
         // interiors with ledges (cloth platforms): walking off an edge is a fall, not a snap down to the floor below
         if (this.ledges && gy < prevY - 0.9) {
           this.grounded = false; v.y = Math.min(0, this._groundVy); this.airT = 0;
-        } else if (this.speed > 9 && groundVy < this._groundVy - GRAVITY * dt * 1.6 && groundVy < -2) {
+        } else if (onSlide && this.speed > 15 && this._slideLaunch(gy)) {
+          // off a kicker or a roller's crest: spread the robe for a short glide when it throws you up
+          this.grounded = false; p.y = gy; this.airT = COYOTE;
+          if (v.y > 1.5) { this.glideLatch = true; this.events.push({ type: 'kick', speed: this.speed }); }
+        } else if (!onSlide && this.speed > 9 && groundVy < this._groundVy - GRAVITY * dt * 1.6 && groundVy < -2) {
           this.grounded = false; v.y = this._groundVy * 0.85; p.y = prevY + v.y * dt;
           this.airT = COYOTE;
         } else { p.y = gy; v.y = 0; this._groundVy = groundVy; }
@@ -824,7 +856,8 @@ export class Player {
           this.squashV -= Math.min(6, impact * 0.55);
         }
       }
-      this.surfing = this.grounded && surfAmt > 0.45 && this.speed > 8;
+      this.surfing = this.grounded && surfAmt > 0.45 && this.speed > (onSlide ? 5 : 8);
+      this.slideK += ((onSlide ? 1 : 0) - this.slideK) * exp(onSlide ? 3 : 1.2, dt);
 
       // recharge
       if (this.grounded && !this.flying) this.charge = Math.min(1, this.charge + 0.28 * dt * (1 - 0.8 * this.cold) * this.rechargeMul);
@@ -1068,6 +1101,55 @@ export class Player {
     this.scarf.uniforms.uTime.value = time;
     this.flash = Math.max(0, this.flash - dt * 2.5);
     this.scarf.uniforms.uFlash.value = this.flash;
+  }
+
+  /**
+   * Riding a long slide: speed and heading instead of friction. Gravity along your heading plus a pull toward the
+   * course's pace; the stick carves; with no input you drift back to the course line, and the halfpipe walls turn you
+   * back toward the middle. You can never stop dead or be turned back uphill.
+   */
+  _slidePhysics(dt, wx, wz, wishAmt, gx, gz, grounded) {
+    const v = this.vel, k = clamp((this.slide - 0.3) / 0.5, 0, 1);
+    let hs = Math.hypot(v.x, v.z);
+    const ct = Math.atan2(this.slideTx, this.slideTz);
+    let cur = hs > 0.5 ? Math.atan2(v.x, v.z) : ct;
+    let brake = 0;
+    if (wishAmt > 0.05 && this.stunned <= 0) {
+      const want = Math.atan2(wx, wz);
+      if (Math.abs(wrapAngle(want - ct)) > 2.25) brake = wishAmt;      // pulling back: dig in and slow, don't turn round
+      else cur += clamp(wrapAngle(want - cur), -SL_TURN * dt, SL_TURN * dt) * Math.min(1, wishAmt * 1.5) * (grounded ? 1 : 0.45);
+    }
+    let rel = wrapAngle(cur - ct);
+    const ad = Math.abs(this.slideD), wall = smooth(this.slideFw, this.slideW, ad);
+    // up a wall: aim back down toward the middle (a positive heading change turns toward the left, -n)
+    const wantRel = Math.sign(this.slideD) * 0.6 * wall;
+    const idle = wishAmt > 0.05 ? 0 : 1;
+    const pull = 0.35 + 1.8 * idle + 6 * wall * wall * (grounded ? 1 : 0.5);
+    // hands off: settle gently back toward the middle of the floor instead of swinging wall to wall
+    const centre = idle * Math.sign(this.slideD) * 0.22 * Math.min(1, ad / Math.max(1, this.slideFw));
+    rel += (wantRel + centre * (1 - wall) - rel) * exp(pull, dt);
+    rel = clamp(rel, -1.15, 1.15);
+    cur = ct + rel;
+    const hx = Math.sin(cur), hz = Math.cos(cur);
+    if (grounded) {
+      const along = gx * hx + gz * hz;                                  // > 0 uphill
+      const vT = this.slideVT * (1 - 0.4 * brake);
+      hs += (-SL_G * along * k + SL_FLOW * (0.4 + 0.6 * k) * (vT - hs)) * dt;
+      hs = clamp(hs, SL_MIN * k + 4 * (1 - k), SL_MAX);
+    }
+    v.x = hx * hs; v.z = hz * hs;
+  }
+
+  /** On a slide: does the ramp under us throw us clear of the sand ahead? Sets vel.y to the take-off speed if so. */
+  _slideLaunch(gy) {
+    const p = this.pos, v = this.vel, T = 0.22;
+    const g = terrainGradient(p.x - v.x * 0.04, p.z - v.z * 0.04);
+    const vy0 = g.x * v.x + g.z * v.z;                       // climb rate of the ramp just behind us
+    if (vy0 < -4) return false;
+    const yb = gy + vy0 * T - 0.5 * GRAVITY * 0.75 * T * T;
+    if (yb < terrainHeight(p.x + v.x * T, p.z + v.z * T) + 0.35) return false;
+    v.y = Math.max(0, vy0) * 0.9;
+    return true;
   }
 
   /** Pull out of a dive: the vertical speed swings round into forward speed and a short rising arc. */

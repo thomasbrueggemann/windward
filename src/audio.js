@@ -194,8 +194,52 @@ export class AudioEngine {
       if (!s.singing && s.sing < 0.03) { this._singStop(); }
     }
 
+    this._slideMusic(s, t);
+
     // melody
     if (t > this._nextNote) this._playPhrase(t);
+  }
+
+  // -------------------------------------------------------------------- the long slides: a chord that swells as you ride
+  _slideMusic(s, t) {
+    const k = s.slide || 0;
+    if (k < 0.01 && !this.slideNodes) return;
+    const SL = { dune: { root: 50, chord: [0, 7, 14, 16, 21] }, gold: { root: 46, chord: [0, 7, 11, 14, 18] } };
+    if (!this.slideNodes) {
+      const ctx = this.ctx;
+      const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 600; f.Q.value = 0.7;
+      const g = ctx.createGain(); g.gain.value = 0;
+      f.connect(g); g.connect(this.musicBus);
+      const voices = [];
+      for (let i = 0; i < 5; i++) {
+        const o = ctx.createOscillator(); o.type = i < 2 ? 'sawtooth' : 'triangle';
+        const o2 = ctx.createOscillator(); o2.type = 'sine';
+        const vg = ctx.createGain(); vg.gain.value = i < 2 ? 0.16 : 0.22;
+        o.connect(vg); o2.connect(vg); vg.connect(f); o.detune.value = (i - 2) * 4; o2.detune.value = -(i - 2) * 6;
+        o.start(); o2.start(); voices.push([o, o2]);
+      }
+      // a slow shimmer: amplitude wobble on the top voices
+      const lfo = ctx.createOscillator(); lfo.frequency.value = 0.23; const lg = ctx.createGain(); lg.gain.value = 180; lfo.connect(lg); lg.connect(f.frequency); lfo.start();
+      this.slideNodes = { f, g, voices, kind: null };
+    }
+    const n = this.slideNodes, def = SL[s.slideKind] || SL.dune;
+    if (s.slideKind && n.kind !== s.slideKind) {
+      n.kind = s.slideKind;
+      n.voices.forEach(([o, o2], i) => { const fr = mtof(def.root + def.chord[i]); o.frequency.setTargetAtTime(fr, t, 0.05); o2.frequency.setTargetAtTime(fr * 2, t, 0.05); });
+    }
+    // rises over the ride: the top voices climb a step in the last third, the filter opens with speed
+    const u = s.slideU || 0;
+    n.voices.forEach(([o, o2], i) => { if (i >= 3) { const fr = mtof(def.root + def.chord[i] + (u > 0.66 ? 2 : 0)); o.frequency.setTargetAtTime(fr, t, 1.5); o2.frequency.setTargetAtTime(fr * 2, t, 1.5); } });
+    n.g.gain.setTargetAtTime(k * (0.06 + 0.07 * u), t, k > 0.5 ? 1.2 : 2.5);
+    n.f.frequency.setTargetAtTime(500 + 90 * Math.max(0, (s.speed || 0) - 8) + 900 * u, t, 0.6);
+    this.sandGain.gain.setTargetAtTime(s.surfing ? Math.min(0.34, (s.speed || 0) * 0.012 + 0.06 * k) : 0, t, 0.15);
+    this.windGain.gain.setTargetAtTime(0.05 + s.snow * 0.5 + Math.min(0.32, (s.speed || 0) * 0.01 * (1 + k)), t, 0.6);
+  }
+  /** Off a kicker: a bright rising run. */
+  slideKick() {
+    if (!this.ready) return; const t = this.ctx.currentTime;
+    [0, 4, 7, 12].forEach((o, i) => this._bell(74 + o + (this.mood === 2 ? -5 : 0), t + i * 0.05, 0.045, 1.8));
+    this._noiseBurst(t, 0.6, 2400, 0.6, 0.05);
   }
 
   _setMood(i) {

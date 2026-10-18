@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { terrainHeight, terrainHeightFar, trenchAmount, WIND } from './heightfield.js';
+import { terrainHeight, terrainHeightFar, trenchAmount, WIND, MOUNTAIN, slideFlow } from './heightfield.js';
 import { FOOTPRINTS } from './layout.js';
 
 export const CHUNK = 64;
@@ -12,6 +12,8 @@ const SKIRT = 9;
 const vert = /* glsl */`
 attribute float aTrench;
 attribute float aCav;
+attribute vec4 aFlow;
+varying vec4 vFlow;
 varying vec3 vWorld;
 varying vec3 vN;
 varying float vTrench;
@@ -21,6 +23,7 @@ void main() {
   vN = normal;
   vTrench = aTrench;
   vCav = aCav;
+  vFlow = aFlow;
   gl_Position = projectionMatrix * viewMatrix * vec4(position, 1.0);
 }`;
 
@@ -36,6 +39,7 @@ uniform vec4 uMarks[8]; uniform vec3 uMarkCol[8]; uniform int uMarkN;
 uniform vec4 uIce[4]; uniform float uIceRot[4]; uniform int uIceN;
 uniform vec4 uFlood; uniform float uFloodK;
 uniform vec4 uStream[4]; uniform vec2 uStreamDir[4]; uniform int uStreamN;
+varying vec4 vFlow;      // long slides: course coordinates s, d (xy), slide mask (z), golden (w)
 varying vec3 vWorld;
 varying vec3 vN;
 varying float vTrench;
@@ -245,6 +249,18 @@ void main(){
       col += uPoolColor * flow * m * 0.38;
     }
   }
+  // --- long slides: sand pouring down the course in streaks, glinting; gold on the golden descent
+  if (vFlow.z > 0.01) {
+    float a = vFlow.x, c = vFlow.y;
+    float near = 1. - smoothstep(60., 220., dist);
+    float s1 = a - uTime * 7.5, s2 = a - uTime * 4.2;
+    float flow = smoothstep(0.45, 1., vnoise(vec2(s1 * 0.32, c * 1.5))) * 0.7 + smoothstep(0.55, 1., vnoise(vec2(s2 * 0.9 + 9., c * 3.6))) * 0.5;
+    float m = vFlow.z * near;
+    vec3 tint = mix(uHi, uPoolColor * 1.6, vFlow.w);
+    col = mix(col, col * (1.08 + 0.1 * vFlow.w), m);
+    col += tint * flow * m * (0.10 + 0.12 * vFlow.w) * (0.5 + 0.5 * tone);
+    col += uGlit * g * 2.5 * m * (1. + 0.6 * vFlow.w);
+  }
   if (uMarkN > 0) {
     for (int i = 0; i < 8; i++) {
       if (i >= uMarkN) break;
@@ -316,6 +332,7 @@ const sharedIndex = (() => {
 })();
 
 const _hs = new Float32Array((N + 3) * (N + 3));
+const _fl = [0, 0, 0, 0];
 
 function buildChunkGeometry(cx, cz) {
   const x0 = cx * CHUNK, z0 = cz * CHUNK;
@@ -329,7 +346,7 @@ function buildChunkGeometry(cx, cz) {
   }
   const pos = new Float32Array(M * M * 3);
   const nor = new Float32Array(M * M * 3);
-  const tr = new Float32Array(M * M), cv = new Float32Array(M * M);
+  const tr = new Float32Array(M * M), cv = new Float32Array(M * M), fl = new Float32Array(M * M * 4);
   // coarse cavity: neighbours-average minus centre on an 8 m grid (shared formula, so chunk edges match), bilinear to vertices
   const CG = 11, cav = new Float32Array(9 * 9), hc = new Float32Array(CG * CG);
   for (let j = 0; j < CG; j++) for (let i = 0; i < CG; i++) hc[j * CG + i] = terrainHeight(x0 + (i - 1) * 8, z0 + (j - 1) * 8);
@@ -350,6 +367,7 @@ function buildChunkGeometry(cx, cz) {
     pos[o * 3] = wx; pos[o * 3 + 1] = h - (skirt ? SKIRT : 0); pos[o * 3 + 2] = wz;
     nor[o * 3] = -dhdx * il; nor[o * 3 + 1] = il; nor[o * 3 + 2] = -dhdz * il;
     tr[o] = trenchAmount(wx, wz);
+    slideFlow(wx, wz, _fl); fl[o * 4] = _fl[0]; fl[o * 4 + 1] = _fl[1]; fl[o * 4 + 2] = _fl[2]; fl[o * 4 + 3] = _fl[3];
     const gx = Math.min(7.999, ci / 6), gz = Math.min(7.999, cj / 6), ix = gx | 0, iz = gz | 0, fx = gx - ix, fz = gz - iz;
     cv[o] = (cav[iz * 9 + ix] * (1 - fx) + cav[iz * 9 + ix + 1] * fx) * (1 - fz) + (cav[(iz + 1) * 9 + ix] * (1 - fx) + cav[(iz + 1) * 9 + ix + 1] * fx) * fz;
   }
@@ -358,6 +376,7 @@ function buildChunkGeometry(cx, cz) {
   g.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
   g.setAttribute('aTrench', new THREE.BufferAttribute(tr, 1));
   g.setAttribute('aCav', new THREE.BufferAttribute(cv, 1));
+  g.setAttribute('aFlow', new THREE.BufferAttribute(fl, 4));
   g.setIndex(sharedIndex);
   g.boundingSphere = new THREE.Sphere(
     new THREE.Vector3(x0 + CHUNK / 2, (minY + maxY) / 2, z0 + CHUNK / 2),
@@ -434,7 +453,8 @@ export function buildFarTerrain(material) {
     return out;
   };
   const xs = lines(-3400, 3400, -1500, 1500, 16, 34);
-  const zs = lines(-4300, 900, -3900, -1450, 16, 34).reverse();      // +z (start) first
+  const mz = MOUNTAIN.z;   // the long slides lengthen the route: the mountain (and the fine band around it) moves with it
+  const zs = lines(Math.min(-4300, mz - 1700), 900, mz - 1255, mz + 1195, 16, 34).reverse();      // +z (start) first
   const nx = xs.length, nz = zs.length;
   const pos = new Float32Array(nx * nz * 3), nor = new Float32Array(nx * nz * 3), tr = new Float32Array(nx * nz), cv = new Float32Array(nx * nz);
   const hs = new Float32Array(nx * nz);
@@ -465,6 +485,7 @@ export function buildFarTerrain(material) {
   g.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
   g.setAttribute('aTrench', new THREE.BufferAttribute(tr, 1));
   g.setAttribute('aCav', new THREE.BufferAttribute(cv, 1));
+  g.setAttribute('aFlow', new THREE.BufferAttribute(new Float32Array(nx * nz * 4), 4));
   g.setIndex(new THREE.BufferAttribute(idx, 1));
   g.computeBoundingSphere();
   const mesh = new THREE.Mesh(g, material);

@@ -6,7 +6,7 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { makeSandUniforms, makeSandMaterial, Terrain, buildFarTerrain } from './world/terrain.js';
 import { makeSky, makeSummitLight } from './world/sky.js';
 import { samplePalette, blendParadise } from './world/palette.js';
-import { terrainHeight, terrainGradient, progressAt, zAtProgress, pathX, summitPoint, WIND, PATH_LEN, clamp, smooth } from './world/heightfield.js';
+import { terrainHeight, terrainGradient, progressAt, zAtProgress, pathX, summitPoint, WIND, clamp, smooth, paletteProgressAt, SLIDES } from './world/heightfield.js';
 import { SEED } from './world/seed.js';
 import { PLAN, SITES, onPath } from './world/layout.js';
 import { Ruins } from './world/ruins.js';
@@ -26,6 +26,7 @@ import { Updrafts } from './world/updrafts.js';
 import { flightFx, SingRings } from './flightfx.js';
 import { Interiors } from './interiors/index.js';
 import { Passages } from './world/passages.js';
+import { Slides } from './world/slides.js';
 
 window.addEventListener('error', (e) => { $('err').textContent += (e.message || e) + '\n'; });
 function $(id) { return document.getElementById(id); }
@@ -116,7 +117,10 @@ const passages = new Passages(scene, { ruins, props, fx });
 passages.adopt(guardians);
 guardians.push(...passages.guardians);
 env.cliff = passages.cliff;
+// the long sand slides (their ground was carved at import): they carry whoever rides them
+const slides = new Slides(scene, { ruins, props, fx });
 const group = new Group(scene, { ruins, props });   // the other travelers (spots come from companionSpots(ruins) unless given)
+group.slotFn = (c, k, n, pl, slot) => slides.slotFor(c, k, n, pl, slot);
 // flight: wind columns lift whoever passes env; cloth creatures and companions give a ribbon boost when flown close to
 const updrafts = new Updrafts(scene);
 env.updrafts = updrafts;
@@ -130,8 +134,8 @@ player.ribbonSources = () => {
 
 // ------------------------------------------------------------------ palette
 const ROCK_DESERT = new THREE.Color('#5a4a42'), ROCK_CAVE = new THREE.Color('#14243a'), ROCK_SNOW = new THREE.Color('#4a5670');
-function applyPalette(p) {
-  samplePalette(p);
+function applyPalette(p, pp = p) {
+  samplePalette(pp);
   const pal = blendParadise(game.paradise || 0);
   env.pal = pal; env.sunDir.copy(pal.sun); env.progress = p;
   const u = sandU;
@@ -198,7 +202,7 @@ function applySettings() {
 }
 applySettings();
 window.__THREE = THREE;
-window.__game = { seed: SEED, sites: SITES, plan: PLAN, interiors, passages, hf: { terrainHeight, terrainGradient, pathX }, companion: group.members[0], group, updrafts, player, cam, env, scene, camera, game, terrain, renderer, input, props, guardians, flyers, audio, ruins, summitPoint };
+window.__game = { slides, slideList: SLIDES, seed: SEED, sites: SITES, plan: PLAN, interiors, passages, hf: { terrainHeight, terrainGradient, pathX }, companion: group.members[0], group, updrafts, player, cam, env, scene, camera, game, terrain, renderer, input, props, guardians, flyers, audio, ruins, summitPoint };
 
 const SAND = new THREE.Color();
 const tmp = new THREE.Vector3();
@@ -643,7 +647,7 @@ function autoPilot(inp, dt) {
   let amt = (lag && !w && !door) ? 0 : 1;
   if (w && w.dist < 4) amt = 0;
   // the challenge passages steer (and jump, and sing) the autopilot through
-  const pa = passages.auto(player, A, dt);
+  const pa = slides.auto(player) || passages.auto(player, A, dt);
   if (pa) { if (pa.tx !== undefined) { tx = pa.tx; tz = pa.tz; } if (pa.amt !== undefined) amt = pa.amt; }
   const wx = tx - pp.x, wz = tz - pp.z, wl = Math.hypot(wx, wz) || 1;
   const yaw = cam.yaw, fx = -Math.sin(yaw), fz = -Math.cos(yaw), rx = Math.cos(yaw), rz = -Math.sin(yaw);
@@ -676,7 +680,7 @@ function frame(nowMs, doRender = true) {
   if (interiors.step(dt, time, inp, doRender)) return;   // inside a building: the room runs the frame
 
   const prog = progressAt(player.pos.z);
-  applyPalette(prog);
+  applyPalette(prog, paletteProgressAt(player.pos.z));
   SAND.copy(env.pal.lit).lerp(env.pal.hi, 0.4);
   clothUniforms.uTime.value = time;
   const evs = [];
@@ -704,6 +708,11 @@ function frame(nowMs, doRender = true) {
     passages.hints.length = 0;
     for (const e of passages.events) { if (e.type === 'gust-warn') audio.gustWarn && audio.gustWarn(); else if (e.type === 'gust') audio.gust(1.3); }
     passages.events.length = 0;
+    slides.update(dt, { player, group, camera, time, playing: game.state === 'playing', env });
+    for (const h of slides.hints) showHint(...h);
+    slides.hints.length = 0;
+    for (const e of slides.events) { if (e.type === 'kick') audio.slideKick && audio.slideKick(); }
+    slides.events.length = 0;
     if (group.near > 0 && group.snow > 0.3) showHint('huddle', 'Stay close: huddled together, the wind and cold bite less. Hold a long note — sung together, it parts the storm.', 9000);
     // the thaw: the group's song clears the blizzard around them for a while
     if (group.thaw > 0) {
@@ -728,7 +737,7 @@ function frame(nowMs, doRender = true) {
     // contextual hints
     const b0 = introBanner;
     if (b0 && !b0.awakened && Math.hypot(b0.center.x - player.pos.x, b0.center.z - player.pos.z) < 55) showHint('sing', input.isTouch ? 'Hold <b>SING</b> — the grey cloth will answer.' : 'Hold <b>E</b> or <b>right-click</b> to sing — the grey cloth will answer.', 9000);
-    if (player.pos.z < 10 - PATH_LEN && game.state === 'playing') startEnding();
+    if (player.pos.z < zAtProgress(1) + 10 && game.state === 'playing') startEnding();
     interiors.updateOutside(dt, time);
     const upd = updrafts.nearest(player.pos);
     if (upd && upd.dist < 45 && game.hints.controls) showHint('updraft', 'A column of wind. Glide or walk into it and let it carry you up.', 7000);
@@ -739,7 +748,8 @@ function frame(nowMs, doRender = true) {
       progress: prog, snow: env.pal.snow, speed: player.speed, surfing: player.surfing, flying: player.flying,
       singing: player.singing, sing: player.sing, guardian: clamp(1 - nearestG / 70, 0, 1),
       dive: player.diveK, glide: player.glideK, soar: player.soarK, airSpeed: Math.hypot(player.speed, player.vel.y),
-      intensity: clamp(0.2 + 0.45 * speedN + (player.flying ? 0.2 : 0) + prog * 0.35, 0, 1),
+      intensity: clamp(0.2 + 0.45 * speedN + (player.flying ? 0.2 : 0) + prog * 0.35 + 0.3 * slides.state.k, 0, 1),
+      slide: slides.state.k, slideKind: slides.state.kind, slideU: slides.state.u,
     });
     // red flash when a guardian strikes
     if (game.hitFlash > 0 && game.state !== 'ending') {
