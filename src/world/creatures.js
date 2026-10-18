@@ -106,6 +106,13 @@ export class Flyers {
       // steer
       const k = near ? 2.4 : 0.6;
       f.vel.x += (tx - p.x) * k * dt; f.vel.y += (ty - p.y) * 1.8 * dt; f.vel.z += (tz - p.z) * k * dt;
+      // never fill the screen: veer away from the camera
+      const cp = this.camPos;
+      if (cp) {
+        const cx = p.x - cp.x, cy = p.y - cp.y, cz = p.z - cp.z, cd = Math.hypot(cx, cy, cz) || 1;
+        if (cd < 12) { const push = (12 - cd) * 10 * dt / cd; f.vel.x += cx * push; f.vel.y += cy * push + (12 - cd) * 2 * dt; f.vel.z += cz * push; }
+        if (cd < 7) { const k7 = 7 / cd; p.set(cp.x + cx * k7, cp.y + cy * k7, cp.z + cz * k7); }
+      }
       const sp = f.vel.length(), maxSp = near ? 13 : 5.5;
       if (sp > maxSp) f.vel.multiplyScalar(maxSp / sp);
       f.vel.multiplyScalar(Math.exp(-0.6 * dt));

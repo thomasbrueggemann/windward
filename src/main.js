@@ -107,6 +107,7 @@ const env = { sunDir: new THREE.Vector3(), pal: null, progress: 0 };
 const props = new Props(scene, ruins, fx);
 props._camPos = camera.position;
 const flyers = new Flyers(scene);
+flyers.camPos = camera.position;
 for (const f of PLAN.flyers) flyers.spawn(...onPath(f.p, f.side), f.n);
 const introBanner = props.intro;
 const guardians = PLAN.guardians.map((p) => new Guardian(scene, ...onPath(p), 48));
